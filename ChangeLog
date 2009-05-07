@@ -1,3 +1,11 @@
+Fri May  8 02:34:25 2009  Akinori MUSHA  <knu@iDaemons.org>
+
+	* Merge for JRuby by Charles Nutter <headius@headius.com> on
+	  May 23, 2010.
+
+	* lib/set.rb (SortedSet#add): Do not require each newly added
+	  element to be Comparable but to respond to <=>. [ruby-dev:38371]
+
 Fri Oct 12 12:25:15 2012  URABE Shyouhei  <shyouhei@ruby-lang.org>
 
 	* error.c (name_err_to_s): we need not infect msg.
