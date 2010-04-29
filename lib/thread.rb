@@ -197,6 +197,7 @@ class ConditionVariable
         @waiters.push(Thread.current)
         Thread.stop
       end
+      self
     ensure
       mutex.lock
     end
@@ -209,6 +210,7 @@ class ConditionVariable
     begin
       t = @waiters.shift
       t.run if t
+      self
     rescue ThreadError
       retry
     end
@@ -229,6 +231,7 @@ class ConditionVariable
       rescue ThreadError
       end
     end
+    self
   end
 end
 

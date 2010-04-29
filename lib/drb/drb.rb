@@ -54,6 +54,7 @@
 require 'socket'
 require 'thread'
 require 'fcntl'
+require 'weakref'
 require 'drb/eq'
 
 #
@@ -366,22 +367,51 @@ module DRb
   # For alternative mechanisms, see DRb::TimerIdConv in rdb/timeridconv.rb
   # and DRbNameIdConv in sample/name.rb in the full drb distribution.
   class DRbIdConv
+    def initialize
+      @id2ref = {}
+    end
 
     # Convert an object reference id to an object.
     #
     # This implementation looks up the reference id in the local object
     # space and returns the object it refers to.
     def to_obj(ref)
-      ObjectSpace._id2ref(ref)
+      _get(ref)
     end
-    
+
     # Convert an object into a reference id.
     #
     # This implementation returns the object's __id__ in the local
     # object space.
     def to_id(obj)
-      obj.nil? ? nil : obj.__id__
+      obj.nil? ? nil : _put(obj)
     end
+
+    def _clean
+      dead = []
+      @id2ref.each {|id,weakref| dead << id unless weakref.weakref_alive?}
+      dead.each {|id| @id2ref.delete(id)}
+    end
+
+    def _put(obj)
+      _clean
+      @id2ref[obj.__id__] = WeakRef.new(obj)
+      obj.__id__
+    end
+
+    def _get(id)
+      weakref = @id2ref[id]
+      if weakref
+        result = weakref.__getobj__ rescue nil
+        if result
+          return result
+        else
+          @id2ref.delete id
+        end
+      end
+      nil
+    end
+    private :_clean, :_put, :_get
   end
 
   # Mixin module making an object undumpable or unmarshallable.
@@ -842,10 +872,15 @@ module DRb
                                   Socket::SOCK_STREAM, 
                                   0,
                                   Socket::AI_PASSIVE)
-      families = Hash[*infos.collect { |af, *_| af }.uniq.zip([]).flatten]
-      return TCPServer.open('0.0.0.0', port) if families.has_key?('AF_INET')
-      return TCPServer.open('::', port) if families.has_key?('AF_INET6')
-      return TCPServer.open(port)
+      family = infos.collect { |af, *_| af }.uniq
+      case family
+      when ['AF_INET']
+        return TCPServer.open('0.0.0.0', port)
+      when ['AF_INET6']
+        return TCPServer.open('::', port)
+      else
+        return TCPServer.open(port)
+      end
     end
 
     # Open a server listening for connections at +uri+ using 

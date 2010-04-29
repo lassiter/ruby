@@ -1,3 +1,33 @@
+enabled=false
+# uncomment this to play with experimental mkmf support
+#enabled=true
+
+# JRuby does not support mkmf yet, so we fail hard here with a useful message
+if !enabled
+  warn "WARNING: JRuby does not support native extensions or the `mkmf' library.\n         Check http://kenai.com/projects/jruby/pages/Home for alternatives."
+else
+
+# We're missing this in our rbconfig
+module Config
+  def Config::expand(val, config = CONFIG)
+    val.gsub!(/\$\$|\$\(([^()]+)\)|\$\{([^{}]+)\}/) do |var|
+      if !(v = $1 || $2)
+        '$'
+      elsif key = config[v = v[/\A[^:]+(?=(?::(.*?)=(.*))?\z)/]]
+        pat, sub = $1, $2
+        config[v] = false
+        Config::expand(key, config)
+        config[v] = key
+        key = key.gsub(/#{Regexp.quote(pat)}(?=\s|\z)/n) {sub} if pat
+        key
+      else
+        var
+      end
+    end
+    val
+  end
+end
+
 # module to create Makefile for extension modules
 # invoke like: ruby -r mkmf extconf.rb
 
@@ -1833,4 +1863,6 @@ realclean:	distclean
 
 if not $extmk and /\A(extconf|makefile).rb\z/ =~ File.basename($0)
   END {mkmf_failed($0)}
+end
+
 end

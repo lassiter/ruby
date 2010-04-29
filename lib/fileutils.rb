@@ -526,7 +526,7 @@ module FileUtils
   OPT_TABLE['move'] = [:force, :noop, :verbose, :secure]
 
   def rename_cannot_overwrite_file?   #:nodoc:
-    /djgpp|cygwin|mswin|mingw|bccwin|wince|emx/ =~ RUBY_PLATFORM
+    /djgpp|cygwin|mswin|mingw|bccwin|wince|emx|java/ =~ RUBY_PLATFORM
   end
   private_module_function :rename_cannot_overwrite_file?
 
@@ -1054,7 +1054,7 @@ module FileUtils
     private
 
     def fu_windows?
-      /mswin|mingw|bccwin|wince|emx/ =~ RUBY_PLATFORM
+      /mswin|mingw|bccwin|wince|emx|java/ =~ RUBY_PLATFORM
     end
 
     def fu_copy_stream0(src, dest, blksize)   #:nodoc:

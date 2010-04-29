@@ -7,8 +7,9 @@
 # 
 
 require 'stringio'
+require 'yaml/compat'
 require 'yaml/error'
-require 'yaml/syck'
+require 'yaml/yecht'
 require 'yaml/tag'
 require 'yaml/stream'
 require 'yaml/constants'
@@ -45,8 +46,8 @@ require 'yaml/constants'
 # at this level.  (See +YAML::parse+.)
 #   
 # The serialization stage happens inside the parser.  The YAML parser used in
-# Ruby is called Syck.  Serialized nodes are available in the extension as
-# SyckNode structs.
+# Ruby is called Yecht.  Serialized nodes are available in the extension as
+# Node structs.
 #       
 # The presentation stage is the YAML document itself.  This is accessible
 # to you as a string.  (See +YAML::dump+.)
@@ -84,12 +85,12 @@ require 'yaml/constants'
 #
 module YAML
 
-    Resolver = YAML::Syck::Resolver
-    DefaultResolver = YAML::Syck::DefaultResolver
+    Resolver = YAML::Yecht::Resolver
+    DefaultResolver = YAML::Yecht::DefaultResolver
     DefaultResolver.use_types_at( @@tagged_classes )
-    GenericResolver = YAML::Syck::GenericResolver
-    Parser = YAML::Syck::Parser
-    Emitter = YAML::Syck::Emitter
+    GenericResolver = YAML::Yecht::GenericResolver
+    Parser = YAML::Yecht::Parser
+    Emitter = YAML::Yecht::Emitter
 
     # Returns a new default parser
     def YAML.parser; Parser.new.set_resolver( YAML.resolver ); end
@@ -149,18 +150,18 @@ module YAML
 	# Parse the first document from the current _io_ stream
 	#
     #   File.open( 'animals.yaml' ) { |yf| YAML::load( yf ) }
-    #      #=> #<YAML::Syck::Node:0x82ccce0
+    #      #=> #<YAML::Yecht::Node:0x82ccce0
     #           @kind=:seq,
     #           @value=
-    #            [#<YAML::Syck::Node:0x82ccd94
+    #            [#<YAML::Yecht::Node:0x82ccd94
     #              @kind=:scalar,
     #              @type_id="str",
     #              @value="badger">,
-    #             #<YAML::Syck::Node:0x82ccd58
+    #             #<YAML::Yecht::Node:0x82ccd58
     #              @kind=:scalar,
     #              @type_id="str",
     #              @value="elephant">,
-    #             #<YAML::Syck::Node:0x82ccd1c
+    #             #<YAML::Yecht::Node:0x82ccd1c
     #              @kind=:scalar,
     #              @type_id="str",
     #              @value="tiger">]>
@@ -168,7 +169,7 @@ module YAML
     # Can also load from a string.
     #
     #   YAML.parse( "--- :locked" )
-    #      #=> #<YAML::Syck::Node:0x82edddc 
+    #      #=> #<YAML::Yecht::Node:0x82edddc 
     #            @type_id="tag:ruby.yaml.org,2002:sym", 
     #            @value=":locked", @kind=:scalar>
     #
@@ -180,18 +181,18 @@ module YAML
     # Parse a document from the file located at _filepath_.
     #
     #   YAML.parse_file( 'animals.yaml' )
-    #      #=> #<YAML::Syck::Node:0x82ccce0
+    #      #=> #<YAML::Yecht::Node:0x82ccce0
     #           @kind=:seq,
     #           @value=
-    #            [#<YAML::Syck::Node:0x82ccd94
+    #            [#<YAML::Yecht::Node:0x82ccd94
     #              @kind=:scalar,
     #              @type_id="str",
     #              @value="badger">,
-    #             #<YAML::Syck::Node:0x82ccd58
+    #             #<YAML::Yecht::Node:0x82ccd58
     #              @kind=:scalar,
     #              @type_id="str",
     #              @value="elephant">,
-    #             #<YAML::Syck::Node:0x82ccd1c
+    #             #<YAML::Yecht::Node:0x82ccd1c
     #              @kind=:scalar,
     #              @type_id="str",
     #              @value="tiger">]>
@@ -383,10 +384,6 @@ module YAML
                 opts
             else
                 emitter.reset( opts )
-            end
-        oid =
-            case oid when Fixnum, NilClass; oid
-            else oid = "#{oid.object_id}-#{oid.hash}"
             end
         out.emit( oid, &e )
 	end

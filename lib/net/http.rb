@@ -278,7 +278,7 @@ module Net   #:nodoc:
   class HTTP < Protocol
 
     # :stopdoc:
-    Revision = %q$Revision$.split[1]
+    Revision = %q$Revision: 25851 $.split[1]
     HTTPVersion = '1.1'
     @newimpl = true
     # :startdoc:
@@ -1469,8 +1469,6 @@ module Net   #:nodoc:
 
     include HTTPHeader
 
-    BUFSIZE = 16*1024
-
     def initialize(m, reqbody, resbody, path, initheader = nil)
       @method = m
       @request_has_body = reqbody
@@ -1556,12 +1554,12 @@ module Net   #:nodoc:
       supply_default_content_type
       write_header sock, ver, path
       if chunked?
-        while s = f.read(BUFSIZE)
+        while s = f.read(1024)
           sock.write(sprintf("%x\r\n", s.length) << s << "\r\n")
         end
         sock.write "0\r\n\r\n"
       else
-        while s = f.read(BUFSIZE)
+        while s = f.read(1024)
           sock.write s
         end
       end

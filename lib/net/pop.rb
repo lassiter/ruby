@@ -196,7 +196,7 @@ module Net
   # 
   class POP3 < Protocol
 
-    Revision = %q$Revision$.split[1]
+    Revision = %q$Revision: 22002 $.split[1]
 
     #
     # Class Parameters

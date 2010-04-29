@@ -132,7 +132,7 @@ module YAML
 		# Folding paragraphs within a column
 		#
 		def fold( value )
-            value.gsub( /(^[ \t]+.*$)|(\S.{0,#{options(:BestWidth) - 1}})(?:[ \t]+|(\n+(?=[ \t]|\Z))|$)/ ) do
+            value.gsub( /(^[ \t]+.*$)|(\S.{0,#{options(:BestWidth) - 1}})(?:[ \t]+|(\n+(?=[ \t]|\Z))|$)/ ) do |s| 
                 $1 || $2 + ( $3 || "\n" )
             end
 		end

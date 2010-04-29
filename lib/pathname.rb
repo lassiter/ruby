@@ -438,8 +438,8 @@ class Pathname
             prefix, *resolved = h[path]
           end
         else
-          s = File.lstat(path)
-          if s.symlink?
+          # This check is JRuby-specific for accessing files inside a jar
+          if File.symlink?(path)
             h[path] = :resolving
             link_prefix, link_names = split_names(File.readlink(path))
             if link_prefix == ''
@@ -517,7 +517,10 @@ class Pathname
     while r = chop_basename(path)
       path, basename = r
     end
-    path == ''
+    # enebo: mild hack for windows drive letters.  Any kook trying
+    # to create a relative path that starts like 'c:/' will be in trouble
+    # so it is not the best solution...
+    path == '' && @path !~ /\A[a-zA-Z]:/
   end
 
   #

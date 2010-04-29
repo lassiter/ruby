@@ -1,12 +1,12 @@
 #
-# YAML::Syck module
-# .. glues syck and yaml.rb together ..
+# YAML::Yecht module
+# .. glues yecht and yaml.rb together ..
 #
-require 'syck'
+require 'yecht'
 require 'yaml/basenode'
 
 module YAML
-    module Syck
+    module Yecht
 
         #
         # Mixin BaseNode functionality

@@ -1,5 +1,55 @@
 # -*- mode: ruby; ruby-indent-level: 4; tab-width: 4 -*- vim: sw=4 ts=4
 require 'date'
+require 'yaml/compat'
+
+# For Compatibility with Syck 0.60
+# class Module
+#     yaml_as "tag:ruby.yaml.org,2002:module"
+
+#     def Module.yaml_new( klass, tag, val )
+#         if String === val
+#             val.split(/::/).inject(Object) do |m, n|
+#                 begin
+#                     m.const_get(n)
+#                 rescue NameError
+#                     raise ArgumentError, "undefined class/module #{n} in #{val}"
+#                 end
+#             end
+#         else
+#             raise YAML::TypeError, "Invalid Module: " + val.inspect
+#         end
+#     end
+
+#     def to_yaml( opts = {} )
+#         YAML::quick_emit( nil, opts ) { |out|
+#             out.scalar( "tag:ruby.yaml.org,2002:module", self.name, :plain )
+#         }
+#     end
+# end
+
+# class Class
+#     yaml_as "tag:ruby.yaml.org,2002:class"
+
+#     def Class.yaml_new( klass, tag, val )
+#             if String === val
+#             val.split(/::/).inject(Object) do |m, n|
+#                 begin
+#                     m.const_get(n)
+#                 rescue NameError
+#                     raise ArgumentError, "undefined class/module #{n} in #{val}"
+#                 end
+#             end
+#         else
+#             raise YAML::TypeError, "Invalid Class: " + val.inspect
+#         end
+#     end
+
+#     def to_yaml( opts = {} )
+#         YAML::quick_emit( nil, opts ) { |out|
+#             out.scalar( "tag:ruby.yaml.org,2002:class", self.name, :plain )
+#         }
+#     end
+# end
 
 class Class
 	def to_yaml( opts = {} )
@@ -12,7 +62,7 @@ class Object
     def to_yaml_style; end
     def to_yaml_properties; instance_variables.sort; end
 	def to_yaml( opts = {} )
-		YAML::quick_emit( self, opts ) do |out|
+		YAML::quick_emit( object_id, opts ) do |out|
             out.map( taguri, to_yaml_style ) do |map|
 				to_yaml_properties.each do |m|
                     map.add( m[1..-1], instance_variable_get( m ) )
@@ -35,7 +85,7 @@ class Hash
         end
     end
 	def to_yaml( opts = {} )
-		YAML::quick_emit( self, opts ) do |out|
+		YAML::quick_emit( object_id, opts ) do |out|
             out.map( taguri, to_yaml_style ) do |map|
                 each do |k, v|
                     map.add( k, v )
@@ -83,7 +133,7 @@ class Struct
         end
     end
 	def to_yaml( opts = {} )
-		YAML::quick_emit( self, opts ) do |out|
+		YAML::quick_emit( object_id, opts ) do |out|
 			#
 			# Basic struct is passed as a YAML map
 			#
@@ -104,7 +154,7 @@ class Array
     yaml_as "tag:yaml.org,2002:seq"
     def yaml_initialize( tag, val ); concat( val.to_a ); end
 	def to_yaml( opts = {} )
-		YAML::quick_emit( self, opts ) do |out|
+		YAML::quick_emit( object_id, opts ) do |out|
             out.seq( taguri, to_yaml_style ) do |seq|
                 each do |x|
                     seq.add( x )
@@ -124,7 +174,7 @@ class Exception
         o
     end
 	def to_yaml( opts = {} )
-		YAML::quick_emit( self, opts ) do |out|
+		YAML::quick_emit( object_id, opts ) do |out|
             out.map( taguri, to_yaml_style ) do |map|
                 map.add( 'message', message )
 				to_yaml_properties.each do |m|
@@ -143,7 +193,7 @@ class String
         to_yaml_style or not to_yaml_properties.empty? or self =~ /\n.+/
     end
     def is_binary_data?
-        ( self.count( "^ -~", "^\r\n" ).fdiv(self.size) > 0.3 || self.index( "\x00" ) ) unless empty?
+        ( self.count( "^ -~", "^\r\n" ) / self.size > 0.3 || self.count( "\x00" ) > 0 ) unless empty?
     end
     def String.yaml_new( klass, tag, val )
         val = val.unpack("m")[0] if tag == "tag:yaml.org,2002:binary"
@@ -161,7 +211,7 @@ class String
         end
     end
 	def to_yaml( opts = {} )
-		YAML::quick_emit( is_complex_yaml? ? self : nil, opts ) do |out|
+		YAML::quick_emit( is_complex_yaml? ? object_id : nil, opts ) do |out|
             if is_binary_data?
                 out.scalar( "tag:yaml.org,2002:binary", [self].pack("m"), :literal )
             elsif to_yaml_properties.empty?
@@ -227,7 +277,7 @@ class Range
         end
     end
 	def to_yaml( opts = {} )
-		YAML::quick_emit( self, opts ) do |out|
+		YAML::quick_emit( object_id, opts ) do |out|
             # if self.begin.is_complex_yaml? or self.begin.respond_to? :to_str or
             #   self.end.is_complex_yaml? or self.end.respond_to? :to_str or
             #   not to_yaml_properties.empty?
@@ -310,7 +360,7 @@ class Time
         end
     end
 	def to_yaml( opts = {} )
-		YAML::quick_emit( self, opts ) do |out|
+		YAML::quick_emit( object_id, opts ) do |out|
             tz = "Z"
             # from the tidy Tobias Peters <t-peters@gmx.de> Thanks!
             unless self.utc?
@@ -347,7 +397,7 @@ end
 class Date
     yaml_as "tag:yaml.org,2002:timestamp#ymd"
 	def to_yaml( opts = {} )
-		YAML::quick_emit( self, opts ) do |out|
+		YAML::quick_emit( object_id, opts ) do |out|
             out.scalar( "tag:yaml.org,2002:timestamp", self.to_s, :plain )
         end
 	end
@@ -375,8 +425,8 @@ class Float
                 str = ".NaN"
             end
             out.scalar( "tag:yaml.org,2002:float", str, :plain )
-        end
 	end
+end
 end
 
 class TrueClass

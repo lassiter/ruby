@@ -50,9 +50,7 @@ module YAML
     end
 end
 
-class Module
-    # :stopdoc:
-
+class Module # :nodoc: all
     # Adds a taguri _tag_ to a class, used when dumping or loading the class
     # in YAML.  See YAML::tag_class for detailed information on typing and
     # taguris.

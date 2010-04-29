@@ -172,7 +172,7 @@ module Net
   #
   class SMTP
 
-    Revision = %q$Revision$.split[1]
+    Revision = %q$Revision: 18353 $.split[1]
 
     # The default SMTP port number, 25.
     def SMTP.default_port
