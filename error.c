@@ -11,6 +11,7 @@
 
 #include "ruby/ruby.h"
 #include "ruby/st.h"
+#include "ruby/encoding.h"
 #include "vm_core.h"
 
 #include <stdio.h>
@@ -193,7 +194,7 @@ rb_warning(const char *fmt, ...)
 
 /*
  * call-seq:
- *    warn(msg)   => nil
+ *    warn(msg)   -> nil
  *
  * Display the given message (followed by a newline) on STDERR unless
  * warnings are disabled (for example with the <code>-W0</code> flag).
@@ -428,7 +429,7 @@ rb_exc_new3(VALUE etype, VALUE str)
 
 /*
  * call-seq:
- *    Exception.new(msg = nil)   =>  exception
+ *    Exception.new(msg = nil)   ->  exception
  *
  *  Construct a new Exception object, optionally passing in
  *  a message.
@@ -450,7 +451,7 @@ exc_initialize(int argc, VALUE *argv, VALUE exc)
  *  Document-method: exception
  *
  *  call-seq:
- *     exc.exception(string) -> an_exception or exc
+ *     exc.exception(string)  ->  an_exception or exc
  *
  *  With no argument, or if the argument is the same as the receiver,
  *  return the receiver. Otherwise, create a new
@@ -474,7 +475,7 @@ exc_exception(int argc, VALUE *argv, VALUE self)
 
 /*
  * call-seq:
- *   exception.to_s   =>  string
+ *   exception.to_s   ->  string
  *
  * Returns exception's message (or the name of the exception if
  * no message is set).
@@ -492,7 +493,7 @@ exc_to_s(VALUE exc)
 
 /*
  * call-seq:
- *   exception.message   =>  string
+ *   exception.message   ->  string
  *
  * Returns the result of invoking <code>exception.to_s</code>.
  * Normally this returns the exception's message or name. By
@@ -508,7 +509,7 @@ exc_message(VALUE exc)
 
 /*
  * call-seq:
- *   exception.inspect   => string
+ *   exception.inspect   -> string
  *
  * Return this exception's class name an message
  */
@@ -536,7 +537,7 @@ exc_inspect(VALUE exc)
 
 /*
  *  call-seq:
- *     exception.backtrace    => array
+ *     exception.backtrace    -> array
  *
  *  Returns any backtrace associated with the exception. The backtrace
  *  is an array of strings, each containing either ``filename:lineNo: in
@@ -596,7 +597,7 @@ rb_check_backtrace(VALUE bt)
 
 /*
  *  call-seq:
- *     exc.set_backtrace(array)   =>  array
+ *     exc.set_backtrace(array)   ->  array
  *
  *  Sets the backtrace information associated with <i>exc</i>. The
  *  argument must be an array of <code>String</code> objects in the
@@ -612,7 +613,7 @@ exc_set_backtrace(VALUE exc, VALUE bt)
 
 /*
  *  call-seq:
- *     exc == obj   => true or false
+ *     exc == obj   -> true or false
  *
  *  Equality---If <i>obj</i> is not an <code>Exception</code>, returns
  *  <code>false</code>. Otherwise, returns <code>true</code> if <i>exc</i> and
@@ -652,7 +653,7 @@ exc_equal(VALUE exc, VALUE obj)
 
 /*
  * call-seq:
- *   SystemExit.new(status=0)   => system_exit
+ *   SystemExit.new(status=0)   -> system_exit
  *
  * Create a new +SystemExit+ exception with the given status.
  */
@@ -673,7 +674,7 @@ exit_initialize(int argc, VALUE *argv, VALUE exc)
 
 /*
  * call-seq:
- *   system_exit.status   => fixnum
+ *   system_exit.status   -> fixnum
  *
  * Return the status value associated with this system exit.
  */
@@ -687,7 +688,7 @@ exit_status(VALUE exc)
 
 /*
  * call-seq:
- *   system_exit.success?  => true or false
+ *   system_exit.success?  -> true or false
  *
  * Returns +true+ if exiting successful, +false+ if not.
  */
@@ -718,7 +719,7 @@ rb_name_error(ID id, const char *fmt, ...)
 
 /*
  * call-seq:
- *   NameError.new(msg [, name])  => name_error
+ *   NameError.new(msg [, name])  -> name_error
  *
  * Construct a new NameError exception. If given the <i>name</i>
  * parameter may subsequently be examined using the <code>NameError.name</code>
@@ -738,7 +739,7 @@ name_err_initialize(int argc, VALUE *argv, VALUE self)
 
 /*
  *  call-seq:
- *    name_error.name    =>  string or nil
+ *    name_error.name    ->  string or nil
  *
  *  Return the name associated with this NameError exception.
  */
@@ -751,7 +752,7 @@ name_err_name(VALUE self)
 
 /*
  * call-seq:
- *  name_error.to_s   => string
+ *  name_error.to_s   -> string
  *
  * Produce a nicely-formatted string representing the +NameError+.
  */
@@ -773,7 +774,7 @@ name_err_to_s(VALUE exc)
 
 /*
  * call-seq:
- *   NoMethodError.new(msg, name [, args])  => no_method_error
+ *   NoMethodError.new(msg, name [, args])  -> no_method_error
  *
  * Construct a NoMethodError exception for a method of the given name
  * called with the given arguments. The name may be accessed using
@@ -902,7 +903,7 @@ name_err_mesg_load(VALUE klass, VALUE str)
 
 /*
  * call-seq:
- *   no_method_error.args  => obj
+ *   no_method_error.args  -> obj
  *
  * Return the arguments passed in as the third parameter to
  * the constructor.
@@ -987,7 +988,7 @@ get_syserr(int n)
 
 /*
  * call-seq:
- *   SystemCallError.new(msg, errno)  => system_call_error_subclass
+ *   SystemCallError.new(msg, errno)  -> system_call_error_subclass
  *
  * If _errno_ corresponds to a known system error code, constructs
  * the appropriate <code>Errno</code> class for that error, otherwise
@@ -1042,7 +1043,7 @@ syserr_initialize(int argc, VALUE *argv, VALUE self)
 
 /*
  * call-seq:
- *   system_call_error.errno   => fixnum
+ *   system_call_error.errno   -> fixnum
  *
  * Return this SystemCallError's error number.
  */
@@ -1055,7 +1056,7 @@ syserr_errno(VALUE self)
 
 /*
  * call-seq:
- *   system_call_error === other  => true or false
+ *   system_call_error === other  -> true or false
  *
  * Return +true+ if the receiver is a generic +SystemCallError+, or
  * if the error numbers +self+ and _other_ are the same.
@@ -1095,7 +1096,7 @@ syserr_eqq(VALUE self, VALUE exc)
  *     def foo
  *       raise "Oups"
  *     end
- *     foo rescue "Hello"   # => "Hello"
+ *     foo rescue "Hello"   #=> "Hello"
  *
  *  On the other hand:
  *
@@ -1207,8 +1208,8 @@ syserr_eqq(VALUE self, VALUE exc)
  *  IndexError.
  *
  *     h = {"foo" => :bar}
- *     h.fetch("foo") # => :bar
- *     h.fetch("baz") # => KeyError: key not found: "baz"
+ *     h.fetch("foo") #=> :bar
+ *     h.fetch("baz") #=> KeyError: key not found: "baz"
  *
  */
 
@@ -1469,7 +1470,7 @@ rb_loaderror(const char *fmt, ...)
     VALUE mesg;
 
     va_start(args, fmt);
-    mesg = rb_vsprintf(fmt, args);
+    mesg = rb_enc_vsprintf(rb_locale_encoding(), fmt, args);
     va_end(args);
     rb_exc_raise(rb_exc_new3(rb_eLoadError, mesg));
 }

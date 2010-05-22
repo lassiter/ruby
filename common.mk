@@ -528,7 +528,7 @@ complex.$(OBJEXT): {$(VPATH)}complex.c $(RUBY_H_INCLUDES)
 dir.$(OBJEXT): {$(VPATH)}dir.c $(RUBY_H_INCLUDES) {$(VPATH)}util.h \
   $(ENCODING_H_INCLUDES)
 dln.$(OBJEXT): {$(VPATH)}dln.c {$(VPATH)}dln.h $(RUBY_H_INCLUDES)
-dln_find.$(OBJEXT): {$(VPATH)}dln.c {$(VPATH)}dln.h $(RUBY_H_INCLUDES)
+dln_find.$(OBJEXT): {$(VPATH)}dln_find.c {$(VPATH)}dln.h $(RUBY_H_INCLUDES)
 dmydln.$(OBJEXT): {$(VPATH)}dmydln.c dln.$(OBJEXT)
 dmyext.$(OBJEXT): {$(VPATH)}dmyext.c
 dmyencoding.$(OBJEXT): {$(VPATH)}dmyencoding.c $(RUBY_H_INCLUDES) \
@@ -540,7 +540,8 @@ enum.$(OBJEXT): {$(VPATH)}enum.c $(RUBY_H_INCLUDES) {$(VPATH)}node.h \
   {$(VPATH)}util.h
 enumerator.$(OBJEXT): {$(VPATH)}enumerator.c $(RUBY_H_INCLUDES)
 error.$(OBJEXT): {$(VPATH)}error.c {$(VPATH)}known_errors.inc \
-  $(RUBY_H_INCLUDES) $(VM_CORE_H_INCLUDES) {$(VPATH)}debug.h
+  $(RUBY_H_INCLUDES) $(VM_CORE_H_INCLUDES) $(ENCODING_H_INCLUDES) \
+  {$(VPATH)}debug.h
 eval.$(OBJEXT): {$(VPATH)}eval.c {$(VPATH)}eval_intern.h {$(VPATH)}vm.h \
   $(RUBY_H_INCLUDES) $(VM_CORE_H_INCLUDES) {$(VPATH)}eval_error.c \
   {$(VPATH)}eval_jump.c {$(VPATH)}debug.h {$(VPATH)}gc.h {$(VPATH)}iseq.h

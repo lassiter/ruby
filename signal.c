@@ -217,8 +217,8 @@ ruby_signal_name(int no)
 
 /*
  * call-seq:
- *    SignalException.new(sig_name)              =>  signal_exception
- *    SignalException.new(sig_number [, name])   =>  signal_exception
+ *    SignalException.new(sig_name)              ->  signal_exception
+ *    SignalException.new(sig_number [, name])   ->  signal_exception
  *
  *  Construct a new SignalException object.  +sig_name+ should be a known
  *  signal name.
@@ -276,7 +276,7 @@ esignal_init(int argc, VALUE *argv, VALUE self)
 
 /*
  * call-seq:
- *    signal_exception.signo   =>  num
+ *    signal_exception.signo   ->  num
  *
  *  Returns a signal number.
  */
@@ -307,7 +307,7 @@ ruby_default_signal(int sig)
 
 /*
  *  call-seq:
- *     Process.kill(signal, pid, ...)    => fixnum
+ *     Process.kill(signal, pid, ...)    -> fixnum
  *
  *  Sends the given signal to the specified process id(s), or to the
  *  current process if _pid_ is zero. _signal_ may be an
@@ -420,10 +420,6 @@ static struct {
 #define sighandler_t sh_t
 #endif
 
-#if defined(SIGSEGV) && defined(HAVE_SIGALTSTACK) && defined(SA_SIGINFO) && !defined(__NetBSD__)
-#define USE_SIGALTSTACK
-#endif
-
 typedef RETSIGTYPE (*sighandler_t)(int);
 #ifdef USE_SIGALTSTACK
 typedef void ruby_sigaction_t(int, siginfo_t*, void*);
@@ -442,18 +438,17 @@ typedef RETSIGTYPE ruby_sigaction_t(int);
 #define ALT_STACK_SIZE (4*1024)
 #endif
 /* alternate stack for SIGSEGV */
-static void
-register_sigaltstack(void)
+void
+rb_register_sigaltstack(rb_thread_t *th)
 {
-    static void *altstack = 0;
     stack_t newSS, oldSS;
 
-    if (altstack) return;
+    if (th->altstack) return;
 
-    newSS.ss_sp = altstack = malloc(ALT_STACK_SIZE);
+    newSS.ss_sp = th->altstack = malloc(ALT_STACK_SIZE);
     if (newSS.ss_sp == NULL)
 	/* should handle error */
-	rb_bug("register_sigaltstack. malloc error\n");
+	rb_bug("rb_register_sigaltstack. malloc error\n");
     newSS.ss_size = ALT_STACK_SIZE;
     newSS.ss_flags = 0;
 
@@ -737,7 +732,7 @@ default_handler(int sig)
       case SIGSEGV:
         func = (sighandler_t)sigsegv;
 # ifdef USE_SIGALTSTACK
-        register_sigaltstack();
+        rb_register_sigaltstack(GET_THREAD());
 # endif
         break;
 #endif
@@ -905,8 +900,8 @@ rb_trap_restore_mask(void)
 
 /*
  * call-seq:
- *   Signal.trap( signal, command ) => obj
- *   Signal.trap( signal ) {| | block } => obj
+ *   Signal.trap( signal, command ) -> obj
+ *   Signal.trap( signal ) {| | block } -> obj
  *
  * Specifies the handling of signals. The first parameter is a signal
  * name (a string such as ``SIGALRM'', ``SIGUSR1'', and so on) or a
@@ -970,7 +965,7 @@ sig_trap(int argc, VALUE *argv)
 
 /*
  * call-seq:
- *   Signal.list => a_hash
+ *   Signal.list -> a_hash
  *
  * Returns a list of signal names mapped to the corresponding
  * underlying signal numbers.
@@ -1130,7 +1125,7 @@ Init_signal(void)
 #endif
 #ifdef SIGSEGV
 # ifdef USE_SIGALTSTACK
-    register_sigaltstack();
+    rb_register_sigaltstack(GET_THREAD());
 # endif
     install_sighandler(SIGSEGV, (sighandler_t)sigsegv);
 #endif

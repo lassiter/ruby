@@ -1,3 +1,244 @@
+Sat May 22 06:46:45 2010  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* cont.c: revert FIBER_USE_NATIVE feature.
+	i.e. r27635, r27643, r27646, r27682, r27701
+
+Fri May 21 23:46:43 2010  Masaki Suketa <masaki.suketa@nifty.ne.jp>
+
+	* ext/win32ole/win32ole.c (ole_invoke): merged from trunk (r27922).
+	  raise NoMethodError when COM method is not found.
+
+	* test/win32ole/test_win32ole.rb (test_no_method_error): ditto.
+
+Fri May 21 19:11:42 2010  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* ext/nkf/nkf.c (rb_nkf_convert, rb_nkf_guess): check too huge
+	  string.
+
+Thu May 20 22:19:37 2010  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* vm_eval.c (rb_f_caller): update rdoc.  a patch from Nobuhiro IMAI
+	  <nov at yo.rim.or.jp> in [ruby-dev:41348].
+
+Thu May 20 22:17:24 2010  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* vm.c (vm_backtrace_each): now takes an init function to distinguish
+	  an empty stack from out of stack.  [ruby-dev:41366]
+
+	* vm_eval.c (print_backtrace, rb_thread_backtrace): ditto.
+
+Wed May 19 22:48:06 2010  NAKAMURA Usaku  <usa@ruby-lang.org>
+
+	* ext/socket/extconf.rb: mswin/mingw ruby has socketpair(), but it's
+	  not exist as such name in ruby static library, so mkmf.rb cannot
+	  find it.
+
+Wed May 19 20:09:38 2010  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* vm_eval.c (rb_f_caller): return [] instead of nil when the function
+	  is called on toplevel.  [ruby-dev:41348]
+
+Wed May 19 20:06:11 2010  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* iseq_compile_each (NODE_DEFINED): put nil first to fix stack
+	  consistency.  [ruby-core:30293]
+	  Now, lfinish[0] of defined_expr seems not to be used.  Refactoring
+	  may be needed.
+
+Wed May 19 17:22:43 2010  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* version.h (RUBY_VERSION_TEENY): revert to API version 1.9.1.
+
+Wed May 19 10:46:05 2010  NAKAMURA Usaku  <usa@ruby-lang.org>
+
+	* win32/win32.c (argv_size): merged into join_argv() to maintain the
+	  agreement with it.  removed code has a calclulation bug.
+	  fixed [Bug#2388]
+
+	* win32/win32.c (join_argv): calc and return the length of joined
+	  argv.
+	  the cause of the original bug was clarified by Masaya TARUI
+	  <tarui AT prx.jp> and the solution was suggested by him, too.
+
+Mon May 17 11:09:58 2010  NAKAMURA Usaku  <usa@ruby-lang.org>
+
+	* lib/fileutils.rb (FileUtils::Entry_#entries): returns pathname in
+	  UTF-8 on Windows to allow FileUtils accessing all pathnames
+	  internally.
+
+Sun May 16 22:21:32 2010  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* proc.c (mnew): initialize a field.  a patch from Takahiro Kambe.
+	  [ruby-dev:41312]
+
+Sun May 16 17:16:09 2010  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* proc.c (proc_binding): don't propagative filename and line_no of
+	  binding that is created from C level.  [ruby-dev:41322]
+
+	* vm_eval.c (eval_string_with_cref): ditto.
+
+Sun May 16 13:55:25 2010  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* error.c (rb_loaderror): use locale string, not ascii-8bit.
+
+Sun May 16 21:14:04 2010  Yuki Sonoda (Yugui)  <yugui@yugui.jp>
+
+	* ruby/test_rubyoptions.rb (TestRubyOptions#test_segv_test):
+	  fixes "NoMethodError: undefined method `[]=' for nil:NilClass"
+
+Fri May 14 01:17:10 2010  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* vm_core.c (rb_thread_struct): add a field for sigaltstack.
+
+	* thread_pthread.c (thread_start_func_1): initialize machine stack
+	  information.
+
+	* thread.c (thread_start_func_2): set sigaltstack for each sub thread.
+	  [ruby-core:24540] [ruby-core:30207]
+
+Thu May 13 07:37:49 2010  Tanaka Akira  <akr@fsij.org>
+
+	* ext/sdbm/_sdbm.c: include unistd.h before sdbm.h for off_t.
+	  fix compilation problem on FreeBSD 6.4.
+
+Wed May 12 11:39:10 2010  NAKAMURA Usaku  <usa@ruby-lang.org>
+
+	* ext/socket/extconf.rb: test all IPPROTO_* constants for recent Win32
+	  SDK.
+
+Tue May 11 23:07:22 2010  Tanaka Akira  <akr@fsij.org>
+
+	* ext/socket/extconf.rb: test IPPROTO_IP and IPPROTO_IPV6 constants.
+
+	* ext/socket/mkconstants.rb: define macros for enum.
+
+	  [ruby-dev:38849]
+
+Wed May 12 09:21:05 2010  NARUSE, Yui  <naruse@ruby-lang.org>
+
+	* re.c (rb_reg_initialize_m): fix wrong index for the lang
+	  option's value 'N'. reported by Masaya TARUI via IRC.
+
+Tue May 11 21:53:18 2010  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* test/rake/test_task_arguments.rb: makes ENV empty during tests
+	  because ENV may change the behavior of Rake::TaskArguments.
+	  [ruby-core:29984]
+
+Tue May 11 09:57:05 2010  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* eval_intern.h (rb_vm_get_sourceline): add prototype.
+
+Tue May 11 09:53:07 2010  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* ext/psych/parser.c (PSYCH_TRANSCODE): get rid of bare use of gcc
+	  extension.
+
+Mon May 10 02:58:33 2010  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* compile.c (iseq_compile_each), vm_insnhelper.c (vm_invoke_block,
+	  vm_throw): allow "return" and "yield" even in singleton class
+	  definition.  based on a patch from wanabe <s.wanabe AT gmail.com>
+	  for "return".  [ruby-core:21379] [ruby-dev:40975]
+
+	* insns.def (defineclass): ditto (straightforwardly push block ptr,
+	  instead of dfp ptr with special flag).
+
+	* vm_core.h (RUBY_VM_CLASS_SPECIAL_P): ditto (no longer needed).
+
+	* proc.c (proc_new): ditto (remove handling for special flag).
+
+	* bootstraptest/test_jump.rb: add tests for above.
+
+Sun May 16 14:41:48 2010  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* common.mk (dln_find.o): fix dependency.
+
+Tue May 11 01:20:43 2010  Aaron Patterson <aaron@tenderlovemaking.com>
+
+	* ext/psych/parser.c (parse): Return strings encoded as
+	  Encoding.default_internal if set.
+
+Mon May 10 06:59:19 2010  NARUSE, Yui  <naruse@ruby-lang.org>
+
+	* common.mk (rdoc): rdoc should depend main. Moreover when XRUBY
+	  is miniruby, it can run after miniruby is built.
+
+Mon May 10 03:36:56 2010  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* vm_eval.c (eval_string_with_cref): propagative filename and line_no
+	  of binding.  [ruby-dev:38767] [ruby-core:28307]
+
+	* vm_core.h (rb_binding_t), proc.c: add filename and line_no fields to
+	  preserve them.
+
+Mon May 10 02:29:51 2010  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* cont.c (fiber_switch): raise FiberError when returning to dead
+	  fiber.  [ruby-dev:40833]
+
+Sun May 16 11:39:15 2010  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* include/ruby/missing.h (signbit): add missing prototype.
+
+Sun May 16 10:49:47 2010  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* ext/iconv/iconv.c (rb_iconv_sys_fail): fix number of arguments.
+	  a patch by Masaya TARUI <tarui AT prx.jp>.
+
+Sun May  9 23:07:53 2010  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* proc.c (proc_dup): copy blockprocval.  proc_dup is used by
+	  define_method, which made blockprocval be GC'ed mistakenly.
+	  [ruby-core:30023]
+
+Sun May 16 14:55:39 2010  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* common.mk (dln_find.o): fix dependency.
+
+Tue May 11 01:20:43 2010  Aaron Patterson <aaron@tenderlovemaking.com>
+
+	* ext/psych/parser.c (parse): Return strings encoded as
+	  Encoding.default_internal if set.
+
+Mon May 10 06:59:19 2010  NARUSE, Yui  <naruse@ruby-lang.org>
+
+	* common.mk (rdoc): rdoc should depend main. Moreover when XRUBY
+	  is miniruby, it can run after miniruby is built.
+
+Mon May 10 03:36:56 2010  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* vm_eval.c (eval_string_with_cref): propagative filename and line_no
+	  of binding.  [ruby-dev:38767] [ruby-core:28307]
+
+	* vm_core.h (rb_binding_t), proc.c: add filename and line_no fields to
+	  preserve them.
+
+Mon May 10 02:29:51 2010  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* cont.c (fiber_switch): raise FiberError when returning to dead
+	  fiber.  [ruby-dev:40833]
+
+Sun May 16 11:39:15 2010  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* include/ruby/missing.h (signbit): add missing prototype.
+
+Sun May 16 10:49:47 2010  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* ext/iconv/iconv.c (rb_iconv_sys_fail): fix number of arguments.
+	  a patch by Masaya TARUI <tarui AT prx.jp>.
+
+Sun May 16 02:23:00 2010  Yutaka Kanemoto  <kanemoto@ruby-lang.org>
+
+	* configure.in: can not load libruby.so if gcc is used with
+	  --enable-shared on AIX.
+
+Sat May 15 17:16:15 2010  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* ext/iconv/iconv.c (rb_iconv_sys_fail): raise BrokenLibrary if
+	  errno is not set.  [ruby-dev:41317]
+
 Thu May 13 18:20:16 2010  NAKAMURA Usaku  <usa@ruby-lang.org>
 
 	* io.c (swallow): should use more_char() instead of fill_cbuf().

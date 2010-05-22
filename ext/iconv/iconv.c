@@ -173,6 +173,18 @@ map_charset(VALUE *code)
     return StringValuePtr(*code);
 }
 
+NORETURN(static void rb_iconv_sys_fail(const char *s));
+static void
+rb_iconv_sys_fail(const char *s)
+{
+    if (errno == 0) {
+	rb_exc_raise(iconv_fail(rb_eIconvBrokenLibrary, Qnil, Qnil, NULL, s));
+    }
+    rb_sys_fail(s);
+}
+
+#define rb_sys_fail(s) rb_iconv_sys_fail(s)
+
 static iconv_t
 iconv_create(VALUE to, VALUE from, struct rb_iconv_opt_t *opt, int *idx)
 {

@@ -16,7 +16,7 @@ static inline VALUE rb_vm_set_finish_env(rb_thread_t * th);
 static inline VALUE vm_yield_with_cref(rb_thread_t *th, int argc, const VALUE *argv, const NODE *cref);
 static inline VALUE vm_yield(rb_thread_t *th, int argc, const VALUE *argv);
 static inline VALUE vm_backtrace(rb_thread_t *th, int lev);
-static int vm_backtrace_each(rb_thread_t *th, int lev, rb_backtrace_iter_func *iter, void *arg);
+static int vm_backtrace_each(rb_thread_t *th, int lev, void (*init)(void *), rb_backtrace_iter_func *iter, void *arg);
 static NODE *vm_cref_push(rb_thread_t *th, VALUE klass, int noex, rb_block_t *blockptr);
 static VALUE vm_exec(rb_thread_t *th);
 static void vm_set_eval_stack(rb_thread_t * th, VALUE iseqval, const NODE *cref);
@@ -442,7 +442,7 @@ NORETURN(static void raise_method_missing(rb_thread_t *th, int argc, const VALUE
 
 /*
  *  call-seq:
- *     obj.method_missing(symbol [, *args] )   => result
+ *     obj.method_missing(symbol [, *args] )   -> result
  *
  *  Invoked by Ruby when <i>obj</i> is sent a message it cannot handle.
  *  <i>symbol</i> is the symbol for the method called, and <i>args</i>
@@ -683,8 +683,8 @@ send_internal(int argc, const VALUE *argv, VALUE recv, call_type scope)
 
 /*
  *  call-seq:
- *     obj.send(symbol [, args...])        => obj
- *     obj.__send__(symbol [, args...])      => obj
+ *     obj.send(symbol [, args...])        -> obj
+ *     obj.__send__(symbol [, args...])      -> obj
  *
  *  Invokes the method identified by _symbol_, passing it any
  *  arguments specified. You can use <code>__send__</code> if the name
@@ -707,7 +707,7 @@ rb_f_send(int argc, VALUE *argv, VALUE recv)
 
 /*
  *  call-seq:
- *     obj.public_send(symbol [, args...])  => obj
+ *     obj.public_send(symbol [, args...])  -> obj
  *
  *  Invokes the method identified by _symbol_, passing it any
  *  arguments specified. Unlike send, public_send calls public
@@ -966,6 +966,10 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, NODE *cref, const char
 	    if (rb_obj_is_kind_of(scope, rb_cBinding)) {
 		GetBindingPtr(scope, bind);
 		envval = bind->env;
+		if (strcmp(file, "(eval)") == 0 && bind->filename != Qnil) {
+		    file = RSTRING_PTR(bind->filename);
+		    line = bind->line_no;
+		}
 	    }
 	    else {
 		rb_raise(rb_eTypeError,
@@ -1058,7 +1062,7 @@ eval_string(VALUE self, VALUE src, VALUE scope, const char *file, int line)
 
 /*
  *  call-seq:
- *     eval(string [, binding [, filename [,lineno]]])  => obj
+ *     eval(string [, binding [, filename [,lineno]]])  -> obj
  *
  *  Evaluates the Ruby expression(s) in <em>string</em>. If
  *  <em>binding</em> is given, which must be a <code>Binding</code>
@@ -1263,8 +1267,8 @@ specific_eval(int argc, VALUE *argv, VALUE klass, VALUE self)
 
 /*
  *  call-seq:
- *     obj.instance_eval(string [, filename [, lineno]] )   => obj
- *     obj.instance_eval {| | block }                       => obj
+ *     obj.instance_eval(string [, filename [, lineno]] )   -> obj
+ *     obj.instance_eval {| | block }                       -> obj
  *
  *  Evaluates a string containing Ruby source code, or the given block,
  *  within the context of the receiver (_obj_). In order to set the
@@ -1300,7 +1304,7 @@ rb_obj_instance_eval(int argc, VALUE *argv, VALUE self)
 
 /*
  *  call-seq:
- *     obj.instance_exec(arg...) {|var...| block }                       => obj
+ *     obj.instance_exec(arg...) {|var...| block }                       -> obj
  *
  *  Executes the given block within the context of the receiver
  *  (_obj_). In order to set the context, the variable +self+ is set
@@ -1332,8 +1336,8 @@ rb_obj_instance_exec(int argc, VALUE *argv, VALUE self)
 
 /*
  *  call-seq:
- *     mod.class_eval(string [, filename [, lineno]])  => obj
- *     mod.module_eval {|| block }                     => obj
+ *     mod.class_eval(string [, filename [, lineno]])  -> obj
+ *     mod.module_eval {|| block }                     -> obj
  *
  *  Evaluates the string or block in the context of _mod_. This can
  *  be used to add methods to a class. <code>module_eval</code> returns
@@ -1362,8 +1366,8 @@ rb_mod_module_eval(int argc, VALUE *argv, VALUE mod)
 
 /*
  *  call-seq:
- *     mod.module_exec(arg...) {|var...| block }       => obj
- *     mod.class_exec(arg...) {|var...| block }        => obj
+ *     mod.module_exec(arg...) {|var...| block }       -> obj
+ *     mod.class_exec(arg...) {|var...| block }        -> obj
  *
  *  Evaluates the given block in the context of the class/module.
  *  The method defined in the block will belong to the receiver.
@@ -1445,7 +1449,7 @@ catch_i(VALUE tag, VALUE data)
 
 /*
  *  call-seq:
- *     catch([arg]) {|tag| block }  => obj
+ *     catch([arg]) {|tag| block }  -> obj
  *
  *  +catch+ executes its block. If a +throw+ is
  *  executed, Ruby searches up its stack for a +catch+ block
@@ -1532,13 +1536,16 @@ rb_catch_obj(VALUE tag, VALUE (*func)(), VALUE data)
 
 /*
  *  call-seq:
- *     caller(start=1)    => array
+ *     caller(start=1)    -> Array or nil
  *
  *  Returns the current execution stack---an array containing strings in
  *  the form ``<em>file:line</em>'' or ``<em>file:line: in
  *  `method'</em>''. The optional _start_ parameter
  *  determines the number of initial stack entries to omit from the
  *  result.
+ *
+ *  Returns +nil+ if _start_ is greater than or equal to the size of
+ *  current execution stack.
  *
  *     def a(skip)
  *       caller(skip)
@@ -1553,12 +1560,13 @@ rb_catch_obj(VALUE tag, VALUE (*func)(), VALUE data)
  *     c(1)   #=> ["prog:5:in `b'", "prog:8:in `c'", "prog:11"]
  *     c(2)   #=> ["prog:8:in `c'", "prog:12"]
  *     c(3)   #=> ["prog:13"]
+ *     c(4)   #=> nil
  */
 
 static VALUE
 rb_f_caller(int argc, VALUE *argv)
 {
-    VALUE level;
+    VALUE level, ary;
     int lev;
 
     rb_scan_args(argc, argv, "01", &level);
@@ -1592,7 +1600,7 @@ print_backtrace(void *arg, VALUE file, int line, VALUE method)
 void
 rb_backtrace(void)
 {
-    vm_backtrace_each(GET_THREAD(), -1, print_backtrace, stderr);
+    vm_backtrace_each(GET_THREAD(), -1, NULL, print_backtrace, stderr);
 }
 
 VALUE
@@ -1623,12 +1631,12 @@ rb_thread_backtrace(VALUE thval)
 int
 rb_backtrace_each(rb_backtrace_iter_func *iter, void *arg)
 {
-    return vm_backtrace_each(GET_THREAD(), -1, iter, arg);
+    return vm_backtrace_each(GET_THREAD(), -1, NULL, iter, arg);
 }
 
 /*
  *  call-seq:
- *     local_variables    => array
+ *     local_variables    -> array
  *
  *  Returns the names of the current local variables.
  *
@@ -1683,8 +1691,8 @@ rb_f_local_variables(void)
 
 /*
  *  call-seq:
- *     block_given?   => true or false
- *     iterator?      => true or false
+ *     block_given?   -> true or false
+ *     iterator?      -> true or false
  *
  *  Returns <code>true</code> if <code>yield</code> would execute a
  *  block in the current context. The <code>iterator?</code> form

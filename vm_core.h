@@ -63,6 +63,10 @@
 #define va_init_list(a,b) va_start(a)
 #endif
 
+#if defined(SIGSEGV) && defined(HAVE_SIGALTSTACK) && defined(SA_SIGINFO) && !defined(__NetBSD__)
+#define USE_SIGALTSTACK
+#endif
+
 /*****************/
 /* configuration */
 /*****************/
@@ -473,6 +477,9 @@ typedef struct rb_thread_struct
     /* misc */
     int method_missing_reason;
     int abort_on_exception;
+#ifdef USE_SIGALTSTACK
+    void *altstack;
+#endif
 } rb_thread_t;
 
 /* iseq.c */
@@ -524,6 +531,8 @@ typedef struct {
 
 typedef struct {
     VALUE env;
+    VALUE filename;
+    unsigned short line_no;
 } rb_binding_t;
 
 /* used by compile time and send insn */
@@ -596,8 +605,6 @@ typedef rb_control_frame_t *
 #define RUBY_VM_IFUNC_P(ptr)        (BUILTIN_TYPE(ptr) == T_NODE)
 #define RUBY_VM_NORMAL_ISEQ_P(ptr) \
   (ptr && !RUBY_VM_IFUNC_P(ptr))
-
-#define RUBY_VM_CLASS_SPECIAL_P(ptr) (((VALUE)(ptr)) & 0x02)
 
 #define RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp) ((rb_block_t *)(&(cfp)->self))
 #define RUBY_VM_GET_CFP_FROM_BLOCK_PTR(b) \
