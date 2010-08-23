@@ -136,4 +136,12 @@ class TestSymbol < Test::Unit::TestCase
   def test_symbol_poped
     assert_nothing_raised { eval('a = 1; :"#{ a }"; 1') }
   end
+
+  def test_ascii_incomat_inspect
+    [Encoding::UTF_16LE, Encoding::UTF_16BE,
+     Encoding::UTF_32LE, Encoding::UTF_32BE].each do |e|
+      assert_equal(':"abc"', "abc".encode(e).to_sym.inspect)
+      assert_equal(':"\\u3042\\u3044\\u3046"', "\u3042\u3044\u3046".encode(e).to_sym.inspect)
+    end
+  end
 end

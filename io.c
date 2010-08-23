@@ -398,9 +398,7 @@ flush_before_seek(rb_io_t *fptr)
     return fptr;
 }
 
-#define io_set_eof(fptr) (void)(((fptr)->mode & FMODE_TTY) && ((fptr)->mode |= FMODE_EOF))
-#define io_unset_eof(fptr) (fptr->mode &= ~FMODE_EOF)
-#define io_seek(fptr, ofs, whence) (errno = 0, io_unset_eof(fptr), lseek(flush_before_seek(fptr)->fd, ofs, whence))
+#define io_seek(fptr, ofs, whence) (errno = 0, lseek(flush_before_seek(fptr)->fd, ofs, whence))
 #define io_tell(fptr) lseek(flush_before_seek(fptr)->fd, 0, SEEK_CUR)
 
 #ifndef SEEK_CUR
@@ -612,52 +610,57 @@ io_writable_length(rb_io_t *fptr, long l)
 }
 
 static VALUE
-io_flush_buffer(VALUE arg)
+io_flush_buffer_sync(void *arg)
 {
-    rb_io_t *fptr = (rb_io_t *)arg;
+    rb_io_t *fptr = arg;
     long l = io_writable_length(fptr, fptr->wbuf_len);
-    return rb_write_internal(fptr->fd, fptr->wbuf+fptr->wbuf_off, l);
+    ssize_t r = write(fptr->fd, fptr->wbuf+fptr->wbuf_off, (size_t)l);
+
+    if (fptr->wbuf_len <= r) {
+	fptr->wbuf_off = 0;
+	fptr->wbuf_len = 0;
+	return 0;
+    }
+    if (0 <= r) {
+	fptr->wbuf_off += (int)r;
+	fptr->wbuf_len -= (int)r;
+	errno = EAGAIN;
+    }
+    return (VALUE)-1;
+}
+
+static VALUE
+io_flush_buffer_async(VALUE arg)
+{
+    return rb_thread_blocking_region(io_flush_buffer_sync, (void *)arg, RUBY_UBF_IO, 0);
+}
+
+static inline int
+io_flush_buffer(rb_io_t *fptr)
+{
+    if (fptr->write_lock) {
+	return (int)rb_mutex_synchronize(fptr->write_lock, io_flush_buffer_async, (VALUE)fptr);
+    }
+    else {
+	return (int)io_flush_buffer_async((VALUE)fptr);
+    }
 }
 
 static int
 io_fflush(rb_io_t *fptr)
 {
-    long r;
-
     rb_io_check_closed(fptr);
     if (fptr->wbuf_len == 0)
         return 0;
     if (!rb_thread_fd_writable(fptr->fd)) {
         rb_io_check_closed(fptr);
     }
-  retry:
-    if (fptr->wbuf_len == 0)
-        return 0;
-    if (fptr->write_lock) {
-	r = rb_mutex_synchronize(fptr->write_lock, io_flush_buffer, (VALUE)fptr);
-    }
-    else {
-	long l = io_writable_length(fptr, fptr->wbuf_len);
-	r = rb_write_internal(fptr->fd, fptr->wbuf+fptr->wbuf_off, l);
-    }
-    /* xxx: Other threads may modify wbuf.
-     * A lock is required, definitely. */
-    rb_io_check_closed(fptr);
-    if (fptr->wbuf_len <= r) {
-        fptr->wbuf_off = 0;
-        fptr->wbuf_len = 0;
-        return 0;
-    }
-    if (0 <= r) {
-        fptr->wbuf_off += (int)r;
-        fptr->wbuf_len -= (int)r;
-        errno = EAGAIN;
-    }
-    if (rb_io_wait_writable(fptr->fd)) {
+    while (fptr->wbuf_len > 0 && io_flush_buffer(fptr) != 0) {
+	if (!rb_io_wait_writable(fptr->fd))
+	    return -1;
         rb_io_check_closed(fptr);
-        goto retry;
     }
-    return -1;
+    return 0;
 }
 
 #ifdef HAVE_RB_FD_INIT
@@ -1176,7 +1179,7 @@ static void clear_readconv(rb_io_t *fptr);
  *     f.rewind     #=> 0
  *     f.lineno     #=> 0
  *     f.readline   #=> "This is line one\n"
- * 
+ *
  *  Note that it cannot be used with streams such as pipes, ttys, and sockets.
  */
 
@@ -1203,9 +1206,6 @@ io_fillbuf(rb_io_t *fptr)
 {
     ssize_t r;
 
-    if (fptr->mode & FMODE_EOF) {
-	return -1;
-    }
     if (fptr->rbuf == NULL) {
         fptr->rbuf_off = 0;
         fptr->rbuf_len = 0;
@@ -1224,10 +1224,8 @@ io_fillbuf(rb_io_t *fptr)
         }
         fptr->rbuf_off = 0;
         fptr->rbuf_len = (int)r; /* r should be <= rbuf_capa */
-        if (r == 0) {
-	    io_set_eof(fptr);
+        if (r == 0)
             return -1; /* EOF */
-	}
     }
     return 0;
 }
@@ -1533,10 +1531,7 @@ io_fread(VALUE str, long offset, rb_io_t *fptr)
 	while (n > 0) {
           again:
 	    c = rb_read_internal(fptr->fd, RSTRING_PTR(str)+offset, n);
-	    if (c == 0) {
-		io_set_eof(fptr);
-		break;
-	    }
+	    if (c == 0) break;
 	    if (c < 0) {
                 if (rb_io_wait_readable(fptr->fd))
                     goto again;
@@ -1870,9 +1865,6 @@ io_getpartial(int argc, VALUE *argv, VALUE io, int nonblock)
                 rb_mod_sys_fail(rb_mWaitReadable, "read would block");
             rb_sys_fail_path(fptr->pathv);
         }
-	else if (n == 0) {
-	    io_set_eof(fptr);
-	}
     }
     rb_str_resize(str, n);
 
@@ -2302,8 +2294,9 @@ swallow(rb_io_t *fptr, int term)
 	    while ((cnt = READ_CHAR_PENDING_COUNT(fptr)) > 0) {
 		const char *p = READ_CHAR_PENDING_PTR(fptr);
 		int i;
-		if (needconv) {
+		if (!needconv) {
 		    if (*p != term) return TRUE;
+		    i = (int)cnt;
 		    while (--i && *++p == term);
 		}
 		else {
@@ -2419,7 +2412,7 @@ prepare_getline_args(int argc, VALUE *argv, VALUE *rsp, long *limit, VALUE io)
 	enc_io = io_read_encoding(fptr);
 	if (enc_io != enc_rs &&
 	    (rb_enc_str_coderange(rs) != ENC_CODERANGE_7BIT ||
-	     !rb_enc_asciicompat(enc_io))) {
+	     (RSTRING_LEN(rs) > 0 && !rb_enc_asciicompat(enc_io)))) {
             if (rs == rb_default_rs) {
                 rs = rb_enc_str_new(0, 0, enc_io);
                 rb_str_buf_cat_ascii(rs, "\n");
@@ -2463,6 +2456,8 @@ rb_io_getline_1(VALUE rs, long limit, VALUE io)
 	int rspara = 0;
         int extra_limit = 16;
 
+        enc = io_read_encoding(fptr);
+
 	if (!NIL_P(rs)) {
 	    rslen = RSTRING_LEN(rs);
 	    if (rslen == 0) {
@@ -2471,6 +2466,13 @@ rb_io_getline_1(VALUE rs, long limit, VALUE io)
 		rspara = 1;
 		swallow(fptr, '\n');
 		rs = 0;
+		if (!rb_enc_asciicompat(enc)) {
+		    rs = rb_usascii_str_new(rsptr, rslen);
+		    rs = rb_str_encode(rs, rb_enc_from_encoding(enc), 0, Qnil);
+		    OBJ_FREEZE(rs);
+		    rsptr = RSTRING_PTR(rs);
+		    rslen = RSTRING_LEN(rs);
+		}
 	    }
 	    else {
 		rsptr = RSTRING_PTR(rs);
@@ -2479,7 +2481,6 @@ rb_io_getline_1(VALUE rs, long limit, VALUE io)
 	}
 
 	/* MS - Optimisation */
-        enc = io_read_encoding(fptr);
 	while ((c = appendline(fptr, newline, &str, &limit)) != EOF) {
             const char *s, *p, *pp, *e;
 
@@ -3154,7 +3155,6 @@ rb_io_ungetbyte(VALUE io, VALUE b)
 
     GetOpenFile(io, fptr);
     rb_io_check_byte_readable(fptr);
-    io_unset_eof(fptr);
     if (NIL_P(b)) return Qnil;
     if (FIXNUM_P(b)) {
 	char cc = FIX2INT(b);
@@ -3191,7 +3191,6 @@ rb_io_ungetc(VALUE io, VALUE c)
 
     GetOpenFile(io, fptr);
     rb_io_check_char_readable(fptr);
-    io_unset_eof(fptr);
     if (NIL_P(c)) return Qnil;
     if (FIXNUM_P(c)) {
 	int cc = FIX2INT(c);
@@ -3518,9 +3517,9 @@ rb_io_fptr_finalize(rb_io_t *fptr)
 {
     if (!fptr) return 0;
     fptr->pathv = Qnil;
-    fptr->write_lock = 0;
     if (0 <= fptr->fd)
 	rb_io_fptr_cleanup(fptr, TRUE);
+    fptr->write_lock = 0;
     if (fptr->rbuf) {
         free(fptr->rbuf);
         fptr->rbuf = 0;
@@ -4216,7 +4215,7 @@ rb_io_ext_int_to_encs(rb_encoding *ext, rb_encoding *intern, rb_encoding **enc, 
 }
 
 static void
-parse_mode_enc(const char *estr, rb_encoding **enc_p, rb_encoding **enc2_p)
+parse_mode_enc(const char *estr, rb_encoding **enc_p, rb_encoding **enc2_p, int *fmode_p)
 {
     const char *p;
     char encname[ENCODING_MAXNAMELEN+1];
@@ -4232,6 +4231,7 @@ parse_mode_enc(const char *estr, rb_encoding **enc_p, rb_encoding **enc2_p)
 	    idx = -1;
 	else {
 	    if (io_encname_bom_p(estr, len)) {
+		if (fmode_p) *fmode_p |= FMODE_SETENC_BY_BOM;
 		estr += 4;
                 len -= 4;
             }
@@ -4244,6 +4244,7 @@ parse_mode_enc(const char *estr, rb_encoding **enc_p, rb_encoding **enc2_p)
     else {
 	long len = strlen(estr);
 	if (io_encname_bom_p(estr, len)) {
+	    if (fmode_p) *fmode_p |= FMODE_SETENC_BY_BOM;
 	    estr += 4;
             len -= 4;
 	    memcpy(encname, estr, len);
@@ -4288,7 +4289,7 @@ mode_enc(rb_io_t *fptr, const char *estr)
 {
     clear_codeconv(fptr);
 
-    parse_mode_enc(estr, &fptr->encs.enc, &fptr->encs.enc2);
+    parse_mode_enc(estr, &fptr->encs.enc, &fptr->encs.enc2, NULL);
 }
 
 static void
@@ -4301,7 +4302,7 @@ rb_io_mode_enc(rb_io_t *fptr, const char *modestr)
 }
 
 int
-rb_io_extract_encoding_option(VALUE opt, rb_encoding **enc_p, rb_encoding **enc2_p)
+rb_io_extract_encoding_option(VALUE opt, rb_encoding **enc_p, rb_encoding **enc2_p, int *fmode_p)
 {
     VALUE encoding=Qnil, extenc=Qundef, intenc=Qundef, tmp;
     int extracted = 0;
@@ -4351,7 +4352,7 @@ rb_io_extract_encoding_option(VALUE opt, rb_encoding **enc_p, rb_encoding **enc2
     }
     if (!NIL_P(encoding)) {
 	extracted = 1;
-	parse_mode_enc(StringValueCStr(encoding), enc_p, enc2_p);
+	parse_mode_enc(StringValueCStr(encoding), enc_p, enc2_p, fmode_p);
     }
     else if (extenc != Qundef || intenc != Qundef) {
         extracted = 1;
@@ -4426,9 +4427,7 @@ rb_io_extract_modeenc(VALUE *vmode_p, VALUE *vperm_p, VALUE opthash,
         p = strchr(p, ':');
         if (p) {
             has_enc = 1;
-            parse_mode_enc(p+1, &enc, &enc2);
-	    if (io_encname_bom_p(p+1, 0))
-		fmode |= FMODE_SETENC_BY_BOM;
+            parse_mode_enc(p+1, &enc, &enc2, &fmode);
         }
 	else {
 	    rb_encoding *e;
@@ -4474,7 +4473,7 @@ rb_io_extract_modeenc(VALUE *vmode_p, VALUE *vperm_p, VALUE opthash,
 	}
         ecflags = rb_econv_prepare_opts(opthash, &ecopts);
 
-        if (rb_io_extract_encoding_option(opthash, &enc, &enc2)) {
+        if (rb_io_extract_encoding_option(opthash, &enc, &enc2, &fmode)) {
             if (has_enc) {
                 rb_raise(rb_eArgError, "encoding specified twice");
             }
@@ -4700,7 +4699,7 @@ rb_file_open_internal(VALUE io, VALUE filename, const char *modestr)
     convconfig_t convconfig;
 
     if (p) {
-        parse_mode_enc(p+1, &convconfig.enc, &convconfig.enc2);
+        parse_mode_enc(p+1, &convconfig.enc, &convconfig.enc2, &fmode);
     }
     else {
 	rb_encoding *e;
@@ -5112,6 +5111,9 @@ pipe_open(struct rb_exec_arg *eargp, VALUE prog, const char *modestr, int fmode,
 	    break;
 	}
     }
+
+    RB_GC_GUARD(argbuf);
+
     if (eargp)
 	rb_run_exec_options(&sarg, NULL);
     if ((fmode & FMODE_READABLE) && (fmode & FMODE_WRITABLE)) {
@@ -6009,9 +6011,11 @@ rb_f_print(int argc, VALUE *argv)
  *  call-seq:
  *     ios.putc(obj)    -> obj
  *
- *  If <i>obj</i> is <code>Numeric</code>, write the character whose
- *  code is <i>obj</i>, otherwise write the first character of the
- *  string representation of  <i>obj</i> to <em>ios</em>.
+ *  If <i>obj</i> is <code>Numeric</code>, write the character whose code is
+ *  the least-significant byte of <i>obj</i>, otherwise write the first byte
+ *  of the string representation of <i>obj</i> to <em>ios</em>. Note: This
+ *  method is not safe for use with multi-byte characters as it will truncate
+ *  them.
  *
  *     $stdout.putc "A"
  *     $stdout.putc 65
@@ -6037,6 +6041,9 @@ rb_io_putc(VALUE io, VALUE ch)
  *  Equivalent to:
  *
  *    $stdout.putc(int)
+ * 
+ * Refer to the documentation for IO#putc for important information regarding
+ * multi-byte characters.
  */
 
 static VALUE
@@ -6652,7 +6659,7 @@ argf_initialize_copy(VALUE argf, VALUE orig)
  *  call-seq:
  *     ARGF.lineno = number  -> nil
  *
- *  Sets the line number of the current file in +ARGF+ to the given +Integer+.
+ *  Sets the line number of +ARGF+ as a whole to the given +Integer+.
  *
  *  +ARGF+ sets the line number automatically as you read data, so normally
  *  you will not need to set it explicitly. To access the current line number
@@ -6678,7 +6685,7 @@ argf_set_lineno(VALUE argf, VALUE val)
  *  call-seq:
  *     ARGF.lineno -> integer
  *
- *  Returns the current line number of the current file in +ARGF+. This value
+ *  Returns the current line number of ARGF as a whole. This value
  *  can be set manually with +ARGF.lineno=+.
  *
  *  For example:
@@ -7627,7 +7634,7 @@ io_encoding_set(rb_io_t *fptr, VALUE v1, VALUE v2, VALUE opt)
 	else {
 	    tmp = rb_check_string_type(v1);
 	    if (!NIL_P(tmp) && rb_enc_asciicompat(rb_enc_get(tmp))) {
-                parse_mode_enc(RSTRING_PTR(tmp), &enc, &enc2);
+                parse_mode_enc(RSTRING_PTR(tmp), &enc, &enc2, NULL);
                 ecflags = rb_econv_prepare_opts(opt, &ecopts);
 	    }
 	    else {
@@ -8060,9 +8067,14 @@ nogvl_copy_stream_wait_write(struct copy_stream_struct *stp)
 #endif
 
 static ssize_t
-simple_sendfile(int out_fd, int in_fd, off_t *offset, size_t count)
+simple_sendfile(int out_fd, int in_fd, off_t *offset, off_t count)
 {
-    return sendfile(out_fd, in_fd, offset, count);
+#if SIZEOF_OFF_T > SIZEOF_SIZE_T
+    /* we are limited by the 32-bit ssize_t return value on 32-bit */
+    if (count > (off_t)SSIZE_MAX)
+        count = SSIZE_MAX;
+#endif
+    return sendfile(out_fd, in_fd, offset, (size_t)count);
 }
 
 #endif
@@ -9550,6 +9562,9 @@ opt_i_get(ID id, VALUE *var)
 static VALUE
 argf_inplace_mode_set(VALUE argf, VALUE val)
 {
+    if (rb_safe_level() >= 1 && OBJ_TAINTED(val))
+	rb_insecure_operation();
+
     if (!RTEST(val)) {
 	if (ARGF.inplace) free(ARGF.inplace);
 	ARGF.inplace = 0;

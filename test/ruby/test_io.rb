@@ -740,12 +740,14 @@ class TestIO < Test::Unit::TestCase
   end
 
   def safe_4
-    Thread.new do
-      Timeout.timeout(10) do
-        $SAFE = 4
-        yield
-      end
-    end.join
+    t = Thread.new do
+      $SAFE = 4
+      yield
+    end
+    unless t.join(10)
+      t.kill
+      flunk("timeout in safe_4")
+    end
   end
 
   def pipe(wp, rp)
@@ -1461,15 +1463,16 @@ End
   def test_print_separators
     $, = ':'
     $\ = "\n"
-    r, w = IO.pipe
-    w.print('a')
-    w.print('a','b','c')
-    w.close
-    assert_equal("a\n", r.gets)
-    assert_equal("a:b:c\n", r.gets)
-    assert_nil r.gets
-    r.close
-    
+    pipe(proc do |w|
+      w.print('a')
+      w.print('a','b','c')
+      w.close
+    end, proc do |r|
+      assert_equal("a\n", r.gets)
+      assert_equal("a:b:c\n", r.gets)
+      assert_nil r.gets
+      r.close
+    end)
   ensure
     $, = nil
     $\ = nil
@@ -1605,5 +1608,19 @@ End
     t = make_tempfile
     t.close
     assert_raise(IOError) {t.binmode}
+  end
+
+  def test_threaded_flush
+    bug3585 = '[ruby-core:31348]'
+    src = %q{\
+      t = Thread.new { sleep 3 }
+      Thread.new {sleep 1; t.kill; p 'hi!'}
+      t.join
+    }.gsub(/^\s+/, '')
+    10.times.map do
+      Thread.start do
+        assert_in_out_err([], src, [%q["hi!"]])
+      end
+    end.each {|th| th.join}
   end
 end

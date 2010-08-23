@@ -419,13 +419,15 @@ ruby_init_loadpath_safe(int safe_level)
 	strlcpy(libpath, ".", sizeof(libpath));
 	p = libpath + 1;
     }
+    baselen = p - libpath;
 #define PREFIX_PATH() rb_str_new(libpath, baselen)
 #else
-    rb_str_set_len(sopath, p - libpath);
+    baselen = p - libpath;
+    rb_str_set_len(sopath, baselen);
+    libpath = RSTRING_PTR(sopath);
 #define PREFIX_PATH() sopath
 #endif
 
-    baselen = p - libpath;
 #define BASEPATH() rb_str_buf_cat(rb_str_buf_new(baselen+len), libpath, baselen)
 
 #define RUBY_RELATIVE(path, len) rb_str_buf_cat(BASEPATH(), path, len)
@@ -1374,6 +1376,7 @@ process_options(int argc, char **argv, struct cmdline_options *opt)
 } while (0)
 
     if (opt->e_script) {
+	VALUE progname = rb_progname;
 	rb_encoding *eenc;
 	if (opt->src.enc.index >= 0) {
 	    eenc = rb_enc_from_index(opt->src.enc.index);
@@ -1382,7 +1385,9 @@ process_options(int argc, char **argv, struct cmdline_options *opt)
 	    eenc = lenc;
 	}
 	rb_enc_associate(opt->e_script, eenc);
+	rb_vm_set_progname(rb_progname = opt->script_name);
 	require_libraries(&opt->req_list);
+	rb_vm_set_progname(rb_progname = progname);
 
 	PREPARE_PARSE_MAIN({
 	    tree = rb_parser_compile_string(parser, opt->script, opt->e_script, 1);
@@ -1590,6 +1595,11 @@ load_file_internal(VALUE arg)
 	else if (!NIL_P(c)) {
 	    rb_io_ungetbyte(f, c);
 	}
+	else {
+	    if (f != rb_stdin) rb_io_close(f);
+	    f = Qnil;
+	}
+	rb_vm_set_progname(rb_progname = opt->script_name);
 	require_libraries(&opt->req_list);	/* Why here? unnatural */
     }
     if (opt->src.enc.index >= 0) {
@@ -1601,6 +1611,11 @@ load_file_internal(VALUE arg)
     else {
 	enc = rb_usascii_encoding();
     }
+    if (NIL_P(f)) {
+	f = rb_str_new(0, 0);
+	rb_enc_associate(f, enc);
+	return (VALUE)rb_parser_compile_string(parser, fname, f, line_start);
+    }
     rb_funcall(f, set_encoding, 2, rb_enc_from_encoding(enc), rb_str_new_cstr("-"));
     tree = rb_parser_compile_file(parser, fname, f, line_start);
     rb_funcall(f, set_encoding, 1, rb_parser_encoding(parser));
@@ -1609,9 +1624,6 @@ load_file_internal(VALUE arg)
     }
     else if (f != rb_stdin) {
 	rb_io_close(f);
-    }
-    else {
-	rb_io_ungetbyte(f, Qnil);
     }
     return (VALUE)tree;
 }

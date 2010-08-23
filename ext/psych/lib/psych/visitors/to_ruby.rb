@@ -50,6 +50,9 @@ module Psych
           o.value.unpack('m').first
         when '!str', 'tag:yaml.org,2002:str'
           o.value
+        when "!ruby/object:DateTime"
+          require 'date'
+          @ss.parse_time(o.value).to_datetime
         when "!ruby/object:Complex"
           Complex(o.value)
         when "!ruby/object:Rational"
@@ -246,13 +249,13 @@ module Psych
 
         begin
           path2class(name)
-        rescue ArgumentError => ex
-          name    = "Struct::#{name}"
+        rescue ArgumentError, NameError => ex
           unless retried
-            retried = true
+            name    = "Struct::#{name}"
+            retried = ex
             retry
           end
-          raise ex
+          raise retried
         end
       end
     end

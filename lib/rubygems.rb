@@ -7,6 +7,11 @@
 
 gem_disabled = !defined? Gem
 
+unless gem_disabled
+  # Nuke the Quickloader stuff
+  Gem::QuickLoader.remove
+end
+
 require 'rubygems/defaults'
 require 'thread'
 require 'etc'
@@ -579,6 +584,12 @@ module Gem
     $LOAD_PATH.index { |p| p.instance_variable_defined? :@gem_prelude_index }
   end
 
+  def self.remove_prelude_paths
+    Gem::QuickLoader::GemLoadPaths.each do |path|
+      $LOAD_PATH.delete(path)
+    end
+  end
+
   ##
   # The file name and line number of the caller of the caller of this method.
 
@@ -1020,7 +1031,7 @@ end
 
 module Kernel
 
-  undef gem if respond_to? :gem # defined in gem_prelude.rb on 1.9
+  remove_method :gem if respond_to?(:gem, true) # defined in gem_prelude.rb on 1.9
 
   ##
   # Use Kernel#gem to activate a specific version of +gem_name+.
@@ -1098,13 +1109,27 @@ end
 
 require 'rubygems/config_file'
 
+class << Gem
+  remove_method :try_activate if Gem.respond_to?(:try_activate, true)
+
+  def try_activate(path)
+    spec = Gem.searcher.find(path)
+    return false unless spec
+
+    Gem.activate(spec.name, "= #{spec.version}")
+    return true
+  end
+end
+
 ##
 # Enables the require hook for RubyGems.
 #
-# Ruby 1.9 allows --disable-gems, so we require it when we didn't detect a Gem
-# constant at rubygems.rb load time.
+# if --disable-rubygems was used, then the prelude wasn't loaded, so
+# we need to load the custom_require now.
 
-require 'rubygems/custom_require' if gem_disabled or RUBY_VERSION < '1.9'
+if gem_disabled
+  require 'rubygems/custom_require'
+end
 
 Gem.clear_paths
 

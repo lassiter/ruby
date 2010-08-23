@@ -68,6 +68,7 @@ static int has_redirection(const char *);
 int rb_w32_wait_events(HANDLE *events, int num, DWORD timeout);
 static int rb_w32_open_osfhandle(intptr_t osfhandle, int flags);
 static int wstati64(const WCHAR *path, struct stati64 *st);
+VALUE rb_w32_conv_from_wchar(const WCHAR *wstr, rb_encoding *enc);
 
 #define RUBY_CRITICAL(expr) do { expr; } while (0)
 
@@ -465,6 +466,16 @@ get_system_directory(WCHAR *path, UINT len)
 }
 
 #define numberof(array) (sizeof(array) / sizeof(*array))
+
+VALUE
+rb_w32_special_folder(int type)
+{
+    WCHAR path[_MAX_PATH];
+
+    if (!get_special_folder(type, path)) return Qnil;
+    regulate_path(path);
+    return rb_w32_conv_from_wchar(path, rb_filesystem_encoding());
+}
 
 UINT
 rb_w32_system_tmpdir(WCHAR *path, UINT len)
@@ -5028,6 +5039,7 @@ rb_w32_read(int fd, void *buf, size_t size)
     size_t len;
     size_t ret;
     OVERLAPPED ol, *pol = NULL;
+    int start = 0;
 
     if (is_socket(sock))
 	return rb_w32_recv(fd, buf, size, 0);
@@ -5050,8 +5062,17 @@ rb_w32_read(int fd, void *buf, size_t size)
 
     ret = 0;
   retry:
-    /* get rid of console writing bug */
-    len = (_osfile(fd) & FDEV) ? min(16 * 1024, size) : size;
+    /* get rid of console reading bug */
+    if (is_console(_osfhnd(fd))) {
+	if (start)
+	    len = min(16 * 1024, size);
+	else {
+	    len = 0;
+	    start = 1;
+	}
+    }
+    else
+	len = size;
     size -= len;
 
     /* if have cancel_io, use Overlapped I/O */

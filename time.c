@@ -30,6 +30,7 @@ static ID id_eq, id_ne, id_quo, id_div, id_cmp, id_lshift;
 #define NDIV(x,y) (-(-((x)+1)/(y))-1)
 #define NMOD(x,y) ((y)-(-((x)+1)%(y))-1)
 #define DIV(n,d) ((n)<0 ? NDIV((n),(d)) : (n)/(d))
+#define MOD(n,d) ((n)<0 ? NMOD((n),(d)) : (n)%(d))
 
 static int
 eq(VALUE x, VALUE y)
@@ -131,7 +132,7 @@ static VALUE
 mul(VALUE x, VALUE y)
 {
     if (FIXNUM_P(x) && FIXNUM_P(y)) {
-#if HAVE_LONG_LONG && SIZEOF_LONG * 2 <= SIZEOF_LONG_LONG 
+#if HAVE_LONG_LONG && SIZEOF_LONG * 2 <= SIZEOF_LONG_LONG
         LONG_LONG ll = (LONG_LONG)FIX2LONG(x) * FIX2LONG(y);
         if (FIXABLE(ll))
             return LONG2FIX(ll);
@@ -655,35 +656,50 @@ wmod(wideval_t wx, wideval_t wy)
 static VALUE
 num_exact(VALUE v)
 {
-    switch (TYPE(v)) {
+    VALUE tmp;
+    int t;
+
+    t = TYPE(v);
+    switch (t) {
       case T_FIXNUM:
       case T_BIGNUM:
-      case T_RATIONAL:
-        break;
+        return v;
 
-      case T_FLOAT:
-        v = rb_convert_type(v, T_RATIONAL, "Rational", "to_r");
+      case T_RATIONAL:
         break;
 
       case T_STRING:
       case T_NIL:
         goto typeerror;
 
-      default: {
-        VALUE tmp;
-        if (!NIL_P(tmp = rb_check_convert_type(v, T_RATIONAL, "Rational", "to_r"))) {
-	    if (rb_respond_to(v, rb_intern("to_str"))) goto typeerror;
+      default:
+        if ((tmp = rb_check_funcall(v, rb_intern("to_r"), 0, NULL)) != Qundef) {
+            if (rb_respond_to(v, rb_intern("to_str"))) goto typeerror;
             v = tmp;
-	}
-        else if (!NIL_P(tmp = rb_check_to_integer(v, "to_int")))
-            v = tmp;
-        else {
-          typeerror:
-            rb_raise(rb_eTypeError, "can't convert %s into an exact number",
-		                    NIL_P(v) ? "nil" : rb_obj_classname(v));
+            break;
         }
+        if (!NIL_P(tmp = rb_check_to_integer(v, "to_int"))) {
+            v = tmp;
+            break;
+        }
+        goto typeerror;
+    }
+
+    t = TYPE(v);
+    switch (t) {
+      case T_FIXNUM:
+      case T_BIGNUM:
+        return v;
+
+      case T_RATIONAL:
+        if (RRATIONAL(v)->den == INT2FIX(1))
+            v = RRATIONAL(v)->num;
         break;
-      }
+
+      default:
+      typeerror:
+        rb_raise(rb_eTypeError, "can't convert %s into an exact number",
+                                NIL_P(v) ? "nil" : rb_obj_classname(v));
     }
     return v;
 }
@@ -869,9 +885,19 @@ rb_localtime_r2(const time_t *t, struct tm *result)
     result = rb_localtime_r(t, result);
 #if defined(HAVE_MKTIME) && defined(LOCALTIME_OVERFLOW_PROBLEM)
     if (result) {
-	time_t t2 = mktime(result);
-	if (*t != t2)
-	    result = NULL;
+        int gmtoff1 = 0;
+        int gmtoff2 = 0;
+        struct tm tmp = *result;
+        time_t t2;
+#  if defined(HAVE_STRUCT_TM_TM_GMTOFF)
+        gmtoff1 = result->tm_gmtoff;
+#  endif
+        t2 = mktime(&tmp);
+#  if defined(HAVE_STRUCT_TM_TM_GMTOFF)
+        gmtoff2 = tmp.tm_gmtoff;
+#  endif
+        if (*t + gmtoff1 != t2 + gmtoff2)
+            result = NULL;
     }
 #endif
     return result;
@@ -885,7 +911,8 @@ rb_localtime_r2(const time_t *t, struct tm *result)
         result = rb_gmtime_r(t, result);
 #if defined(HAVE_TIMEGM) && defined(LOCALTIME_OVERFLOW_PROBLEM)
         if (result) {
-            time_t t2 = timegm(result);
+            struct tm tmp = *result;
+            time_t t2 = timegm(&tmp);
             if (*t != t2)
                 result = NULL;
         }
@@ -933,13 +960,29 @@ static const int leap_year_days_in_month[] = {
     31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
 };
 
+static int
+calc_tm_yday(long tm_year, int tm_mon, int tm_mday)
+{
+    int tm_year_mod400;
+    int tm_yday = tm_mday;
+
+    tm_year_mod400 = MOD(tm_year, 400);
+
+    if (leap_year_p(tm_year_mod400 + 1900))
+	tm_yday += leap_year_yday_offset[tm_mon];
+    else
+	tm_yday += common_year_yday_offset[tm_mon];
+
+    return tm_yday;
+}
+
 static wideval_t
 timegmw_noleapsecond(struct vtm *vtm)
 {
     VALUE year1900;
     VALUE q400, r400;
     int year_mod400;
-    int yday = vtm->mday;
+    int yday;
     long days_in400;
     VALUE vdays, ret;
     wideval_t wret;
@@ -949,10 +992,7 @@ timegmw_noleapsecond(struct vtm *vtm)
     divmodv(year1900, INT2FIX(400), &q400, &r400);
     year_mod400 = NUM2INT(r400);
 
-    if (leap_year_p(year_mod400 + 1900))
-	yday += leap_year_yday_offset[vtm->mon-1];
-    else
-	yday += common_year_yday_offset[vtm->mon-1];
+    yday = calc_tm_yday(year_mod400, vtm->mon-1, vtm->mday);
 
     /*
      *  `Seconds Since the Epoch' in SUSv3:
@@ -1256,7 +1296,8 @@ init_leap_second_info()
         else
             known_leap_seconds_limit = now + (time_t)(366*86400);
 
-        gmtime_with_leapsecond(&known_leap_seconds_limit, &result);
+        if (!gmtime_with_leapsecond(&known_leap_seconds_limit, &result))
+            return;
 
         vtm.year = LONG2NUM(result.tm_year + 1900);
         vtm.mon = result.tm_mon + 1;
@@ -1362,7 +1403,7 @@ static struct tm *localtime_with_gmtoff(const time_t *t, struct tm *result, long
  * The year 2037 is not used because
  * http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=522949
  *
- *  #!/usr/bin/ruby 
+ *  #!/usr/bin/ruby
  *
  *  require 'date'
  *
@@ -1373,8 +1414,8 @@ static struct tm *localtime_with_gmtoff(const time_t *t, struct tm *result, long
  *      d = Date.new(y,m,1)
  *      h[m] ||= {}
  *      h[m][d.wday] ||= y
- *    }   
- *  } 
+ *    }
+ *  }
  *
  *  1.upto(12) {|m|
  *    print "{"
@@ -1405,10 +1446,10 @@ static int compat_common_month_table[12][7] = {
 /*
  * compat_leap_month_table is generated by following program.
  *
- *  #!/usr/bin/ruby 
- * 
+ *  #!/usr/bin/ruby
+ *
  *  require 'date'
- * 
+ *
  *  h = {}
  *  2037.downto(2010) {|y|
  *    1.upto(12) {|m|
@@ -1418,7 +1459,7 @@ static int compat_common_month_table[12][7] = {
  *      h[m][d.wday] ||= y
  *    }
  *  }
- * 
+ *
  *  2.upto(2) {|m|
  *    0.upto(6) {|w|
  *      y = h[m][w]
@@ -2145,7 +2186,7 @@ time_init_1(int argc, VALUE *argv, VALUE time)
  *     t1 = Time.new(2007,11,1,15,25,0, "+09:00") # JST (Narita)
  *     t2 = Time.new(2007,11,1,12, 5,0, "-05:00") # CDT (Minneapolis)
  *     t3 = Time.new(2007,11,1,13,25,0, "-05:00") # CDT (Minneapolis)
- *     t4 = Time.new(2007,11,1,16,53,0, "-04:00") # EDT (Charlotte) 
+ *     t4 = Time.new(2007,11,1,16,53,0, "-04:00") # EDT (Charlotte)
  *     t5 = Time.new(2007,11,5, 9,24,0, "-05:00") # EST (Charlotte)
  *     t6 = Time.new(2007,11,5,11,21,0, "-05:00") # EST (Detroit)
  *     t7 = Time.new(2007,11,5,13,45,0, "-05:00") # EST (Detroit)
@@ -2660,6 +2701,7 @@ find_time_t(struct tm *tptr, int utc_p, time_t *tp)
     int find_dst;
     struct tm result;
     int status;
+    int tptr_tm_yday;
 
 #define GUESS(p) (DEBUG_FIND_TIME_NUMGUESS_INC (utc_p ? gmtime_with_leapsecond(p, &result) : LOCALTIME(p, result)))
 
@@ -2845,7 +2887,7 @@ find_time_t(struct tm *tptr, int utc_p, time_t *tp)
 				guess2 += 24 * 60 * 60;
 			    if (guess != guess2) {
 				tm = LOCALTIME(&guess2, result);
-				if (tmcmp(tptr, tm) == 0) {
+				if (tm && tmcmp(tptr, tm) == 0) {
 				    if (guess < guess2)
 					*tp = guess;
 				    else
@@ -2870,7 +2912,7 @@ find_time_t(struct tm *tptr, int utc_p, time_t *tp)
 				guess2 -= 24 * 60 * 60;
 			    if (guess != guess2) {
 				tm = LOCALTIME(&guess2, result);
-				if (tmcmp(tptr, tm) == 0) {
+				if (tm && tmcmp(tptr, tm) == 0) {
 				    if (guess < guess2)
 					*tp = guess2;
 				    else
@@ -2887,22 +2929,30 @@ find_time_t(struct tm *tptr, int utc_p, time_t *tp)
 	}
     }
     /* Given argument has no corresponding time_t. Let's outerpolation. */
-    if (tm_lo.tm_year == tptr->tm_year && tm_lo.tm_mon == tptr->tm_mon) {
-	*tp = guess_lo +
-	      (tptr->tm_mday - tm_lo.tm_mday) * 24 * 60 * 60 +
-	      (tptr->tm_hour - tm_lo.tm_hour) * 60 * 60 +
-	      (tptr->tm_min - tm_lo.tm_min) * 60 +
-	      (tptr->tm_sec - tm_lo.tm_sec);
-        return NULL;
-    }
-    else if (tm_hi.tm_year == tptr->tm_year && tm_hi.tm_mon == tptr->tm_mon) {
-	*tp = guess_hi +
-	      (tptr->tm_mday - tm_hi.tm_mday) * 24 * 60 * 60 +
-	      (tptr->tm_hour - tm_hi.tm_hour) * 60 * 60 +
-	      (tptr->tm_min - tm_hi.tm_min) * 60 +
-	      (tptr->tm_sec - tm_hi.tm_sec);
-        return NULL;
-    }
+    /*
+     *  `Seconds Since the Epoch' in SUSv3:
+     *  tm_sec + tm_min*60 + tm_hour*3600 + tm_yday*86400 +
+     *  (tm_year-70)*31536000 + ((tm_year-69)/4)*86400 -
+     *  ((tm_year-1)/100)*86400 + ((tm_year+299)/400)*86400
+     */
+
+    tptr_tm_yday = calc_tm_yday(tptr->tm_year, tptr->tm_mon, tptr->tm_mday);
+
+    *tp = guess_lo +
+          ((tptr->tm_year - tm_lo.tm_year) * 365 +
+           ((tptr->tm_year-69)/4) -
+           ((tptr->tm_year-1)/100) +
+           ((tptr->tm_year+299)/400) -
+           ((tm_lo.tm_year-69)/4) +
+           ((tm_lo.tm_year-1)/100) -
+           ((tm_lo.tm_year+299)/400) +
+           tptr_tm_yday -
+           tm_lo.tm_yday) * 86400 +
+          (tptr->tm_hour - tm_lo.tm_hour) * 3600 +
+          (tptr->tm_min - tm_lo.tm_min) * 60 +
+          (tptr->tm_sec - tm_lo.tm_sec);
+
+    return NULL;
 
   out_of_range:
     return "time out of range";
@@ -3105,7 +3155,7 @@ time_to_r(VALUE time)
     GetTimeval(time, tobj);
     v = w2v(rb_time_unmagnify(tobj->timew));
     if (TYPE(v) != T_RATIONAL) {
-        v = rb_convert_type(v, T_RATIONAL, "Rational", "to_r");
+        v = rb_Rational1(v);
     }
     return v;
 }
@@ -3701,7 +3751,7 @@ rb_time_succ(VALUE time)
  *     p t.round(9).iso8601(10)  #=> "2010-03-30T05:43:25.1234567890Z"
  *     p t.round(10).iso8601(10) #=> "2010-03-30T05:43:25.1234567890Z"
  *
- *     t = Time.utc(1999,12,31, 23,59,59)          
+ *     t = Time.utc(1999,12,31, 23,59,59)
  *     p((t + 0.4).round.iso8601(3))    #=> "1999-12-31T23:59:59.000Z"
  *     p((t + 0.49).round.iso8601(3))   #=> "1999-12-31T23:59:59.000Z"
  *     p((t + 0.5).round.iso8601(3))    #=> "2000-01-01T00:00:00.000Z"
@@ -4258,13 +4308,13 @@ strftimev(const char *fmt, VALUE time)
  *    %C - Century (20 in 2009)
  *    %d - Day of the month (01..31)
  *    %D - Date (%m/%d/%y)
- *    %e - Day of the month, blank-padded ( 1..31) 
+ *    %e - Day of the month, blank-padded ( 1..31)
  *    %F - Equivalent to %Y-%m-%d (the ISO 8601 date format)
  *    %h - Equivalent to %b
  *    %H - Hour of the day, 24-hour clock (00..23)
  *    %I - Hour of the day, 12-hour clock (01..12)
  *    %j - Day of the year (001..366)
- *    %k - hour, 24-hour clock, blank-padded ( 0..23) 
+ *    %k - hour, 24-hour clock, blank-padded ( 0..23)
  *    %l - hour, 12-hour clock, blank-padded ( 0..12)
  *    %L - Millisecond of the second (000..999)
  *    %m - Month of the year (01..12)

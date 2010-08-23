@@ -370,7 +370,7 @@ CLEAR_INSTALLED_LIST = clear-installed-list
 install-prereq: $(CLEAR_INSTALLED_LIST) PHONY
 
 clear-installed-list: PHONY
-	@set MAKE="$(MAKE)" > $(INSTALLED_LIST)
+	@> $(INSTALLED_LIST) set MAKE="$(MAKE)"
 
 clean: clean-ext clean-local clean-enc clean-golf clean-rdoc clean-extout
 clean-local:: PHONY
@@ -398,7 +398,7 @@ distclean-extout: clean-extout
 
 realclean:: realclean-ext realclean-local realclean-enc realclean-golf realclean-extout
 realclean-local:: distclean-local
-	@$(RM) parse.c parse.h lex.c newline.c revision.h
+	@$(RM) parse.c parse.h lex.c newline.c revision.h id.h
 realclean-ext::
 realclean-golf: distclean-golf
 realclean-extout: distclean-extout
@@ -425,10 +425,11 @@ no-test-sample: PHONY
 yes-test-sample: PHONY
 	@$(RUNRUBY) $(srcdir)/tool/rubytest.rb
 
+test-knownbugs: test-knownbug
 test-knownbug: miniruby$(EXEEXT) $(PROGRAM) $(RBCONFIG) $(TEST_RUNNABLE)-test-knownbug
 no-test-knownbug: PHONY
 yes-test-knownbug: PHONY
-	$(RUNRUBY) "$(srcdir)/bootstraptest/runner.rb" --ruby="$(PROGRAM)" $(OPTS) $(srcdir)/KNOWNBUGS.rb
+	-$(RUNRUBY) "$(srcdir)/bootstraptest/runner.rb" --ruby="$(PROGRAM)" $(OPTS) $(srcdir)/KNOWNBUGS.rb
 
 test: test-sample btest-ruby test-knownbug
 
@@ -736,7 +737,9 @@ known_errors.inc: $(srcdir)/template/known_errors.inc.tmpl $(srcdir)/defs/known_
 miniprelude.c: $(srcdir)/tool/compile_prelude.rb $(srcdir)/prelude.rb
 	$(BASERUBY) -I$(srcdir) $(srcdir)/tool/compile_prelude.rb $(srcdir)/prelude.rb $@
 
-prelude.c: $(srcdir)/tool/compile_prelude.rb $(RBCONFIG) $(srcdir)/lib/rubygems/defaults.rb $(PRELUDE_SCRIPTS) $(PREP)
+prelude.c: $(srcdir)/tool/compile_prelude.rb $(RBCONFIG) \
+	   $(srcdir)/lib/rubygems/defaults.rb $(srcdir)/lib/rubygems/custom_require.rb \
+	   $(PRELUDE_SCRIPTS) $(PREP)
 	$(COMPILE_PRELUDE) $(PRELUDE_SCRIPTS) $@
 
 golf_prelude.c: $(srcdir)/tool/compile_prelude.rb $(RBCONFIG) $(srcdir)/prelude.rb $(srcdir)/golf_prelude.rb $(PREP)

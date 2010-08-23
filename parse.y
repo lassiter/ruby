@@ -1953,7 +1953,12 @@ arg		: lhs '=' arg
 
 			value_expr($6);
 			if (!$3) $3 = NEW_ZARRAY();
-			args = arg_concat($3, $6);
+			if (nd_type($3) == NODE_BLOCK_PASS) {
+			    args = NEW_ARGSCAT($3, $6);
+			}
+		        else {
+			    args = arg_concat($3, $6);
+		        }
 			if ($5 == tOROP) {
 			    $5 = 0;
 			}
@@ -5487,11 +5492,6 @@ parser_tokadd_utf8(struct parser_params *parser, rb_encoding **encp,
 		if (string_literal) tokaddmbc(codepoint, *encp);
 	    }
 	    else if (string_literal) {
-		if (codepoint == 0 && symbol_literal) {
-		    yyerror("symbol cannot contain '\\u{0}'");
-		    return 0;
-		}
-
 		tokadd(codepoint);
 	    }
 	} while (string_literal && (peek(' ') || peek('\t')));
@@ -5519,11 +5519,6 @@ parser_tokadd_utf8(struct parser_params *parser, rb_encoding **encp,
 	    if (string_literal) tokaddmbc(codepoint, *encp);
 	}
 	else if (string_literal) {
-	    if (codepoint == 0 && symbol_literal) {
-		yyerror("symbol cannot contain '\\u0000'");
-		return 0;
-	    }
-
 	    tokadd(codepoint);
 	}
     }
@@ -5882,11 +5877,6 @@ parser_tokadd_string(struct parser_params *parser,
 	else if ((func & STR_FUNC_QWORDS) && ISSPACE(c)) {
 	    pushback(c);
 	    break;
-	}
-	if (!c && (func & STR_FUNC_SYMBOL)) {
-	    func &= ~STR_FUNC_SYMBOL;
-	    compile_error(PARSER_ARG "symbol cannot contain '\\0'");
-	    continue;
 	}
         if (c & 0x80) {
             has_nonascii = 1;
@@ -6490,6 +6480,7 @@ parser_prepare(struct parser_params *parser)
 #define warn_balanced(op, syn) \
     (last_state != EXPR_CLASS && last_state != EXPR_DOT && \
      last_state != EXPR_FNAME && last_state != EXPR_ENDFN && \
+     last_state != EXPR_ENDARG && \
      space_seen && !ISSPACE(c) && \
      (ambiguous_operator(op, syn), 0))
 
@@ -7256,7 +7247,7 @@ parser_yylex(struct parser_params *parser)
 	COND_LEXPOP();
 	CMDARG_LEXPOP();
 	if (c == ')')
-	    lex_state = EXPR_END;
+	    lex_state = EXPR_ENDFN;
 	else
 	    lex_state = EXPR_ENDARG;
 	return c;
@@ -8327,7 +8318,10 @@ arg_concat_gen(struct parser_params *parser, NODE *node1, NODE *node2)
     if (!node2) return node1;
     switch (nd_type(node1)) {
       case NODE_BLOCK_PASS:
-	node1->nd_iter = arg_concat(node1->nd_iter, node2);
+	if (node1->nd_head)
+	    node1->nd_head = arg_concat(node1->nd_head, node2);
+	else
+	    node1->nd_head = NEW_LIST(node2);
 	return node1;
       case NODE_ARGSPUSH:
 	if (nd_type(node2) != NODE_ARRAY) break;

@@ -51,7 +51,6 @@ with all sufficient information, see the ChangeLog file.
 
   * Enumerable
     * New methods:
-      * Enumerable#join
       * Enumerable#chunk
       * Enumerable#collect_concat
       * Enumerable#each_entry
@@ -127,6 +126,14 @@ with all sufficient information, see the ChangeLog file.
     * new method:
       * Kernel#respond_to_missing?
       * Kernel#singleton_class
+      * Kernel#require_relative
+
+    * extended methods:
+      * Kernel#respond_to? can be used to detect methods not implemented.
+        For example, Process.respond_to?(:fork) returns false on Windows.
+
+    * incompatible changes:
+      * Kernel#instance_eval yields the receiver.
 
   * MatchData
     * New method:
@@ -182,19 +189,15 @@ with all sufficient information, see the ChangeLog file.
         the value itself.  For example, Time.utc(99) means the year 99 AD,
         not 1999 AD.
 
-  * Kernel
-    * new method:
-      * Kernel#require_relative
-
-    * extended methods:
-      * respond_to? can be used to detect methods not implemented.
-        For example, Process.respond_to?(:fork) returns false on Windows.
-
 * digest
-    * new methods:
-      * Digest::Class.base64digest
-      * Digest::Instance#base64digest
-      * Digest::Instance#base64digest!
+  * new methods:
+    * Digest::Class.base64digest
+    * Digest::Instance#base64digest
+    * Digest::Instance#base64digest!
+
+  * Digest::HMAC (digest/hmac) has been marked as deprecated because
+    it was unintentional for the experimental library to be included
+    in the final release of 1.9.1.  Please use OpenSSL::HMAC instead.
 
 * rss
 
@@ -214,6 +217,20 @@ with all sufficient information, see the ChangeLog file.
     * new alias of item.guid.isPermaLink
   * RSS::Maker: item.guid.permanent_link=
     * new alias of item.guid.isPermaLink=
+
+* DL
+  * Now uses libffi as a backend if avaiable.
+    It means DL works fine on more platforms.
+
+* Fiddle
+  * A lightweight wrapper for libffi.
+
+* YAML
+  * Now uses libyaml as a backend if available.
+    It means YAML library supports new standards for YAML.
+
+* Psych
+  * A wrapper for libyaml.
 
 * JSON
   * Update to JSON 1.1.9
@@ -283,8 +300,12 @@ with all sufficient information, see the ChangeLog file.
     * Open3.pipeline
 
 * pty
-  * new method:
+  * new methods:
     * PTY.open
+    * PTY.check
+  * deprecated methods:
+    * protect_signal
+    * reset_signal
 
 * openssl
   * new methods:
@@ -354,6 +375,10 @@ with all sufficient information, see the ChangeLog file.
       * socket option name
       * shutdown's argument
 
+* stringio
+  * new methods:
+    * StringIO#read_nonblock
+    * StringIO#write_nonblock
 * pathname
   * new methods:
     * Pathname#binread
@@ -372,6 +397,11 @@ with all sufficient information, see the ChangeLog file.
   * extended methods:
     * Readline.completion_proc= accepts nil.
       nil means to use default completion proc.
+
+* set
+  * new methods:
+    * Set#keep_if
+    * Set#select!
 
 * time
   * incompatible changes:
@@ -405,6 +435,8 @@ with all sufficient information, see the ChangeLog file.
 * zlib
   * new methods:
     * Zlib::GzipFile#path
+    * Zlib.#adler32_combine
+    * Zlib.#crc32_combine
 
 * rbconfig
   * new methods:
@@ -450,3 +482,7 @@ with all sufficient information, see the ChangeLog file.
   * $:
 
     See above.
+
+  * Digest::HMAC
+
+    Deprecated.  See above.

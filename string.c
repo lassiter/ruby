@@ -141,7 +141,7 @@ static inline const char *
 search_nonascii(const char *p, const char *e)
 {
 #if SIZEOF_VALUE == 8
-# define NONASCII_MASK 0x8080808080808080LL
+# define NONASCII_MASK 0x8080808080808080ULL
 #elif SIZEOF_VALUE == 4
 # define NONASCII_MASK 0x80808080UL
 #endif
@@ -513,7 +513,7 @@ rb_str_conv_enc_opts(VALUE str, rb_encoding *from, rb_encoding *to, int ecflags,
     switch (ret) {
       case econv_destination_buffer_full:
 	/* destination buffer short */
-	len *= 2;
+	len = len < 2 ? 2 : len * 2;
 	rb_str_resize(newstr, len);
 	goto retry;
 
@@ -613,8 +613,8 @@ str_replace_shared(VALUE str2, VALUE str)
 	STR_SET_EMBED_LEN(str2, RSTRING_LEN(str));
     }
     else {
-	FL_SET(str2, STR_NOEMBED);
 	str = rb_str_new_frozen(str);
+	FL_SET(str2, STR_NOEMBED);
 	RSTRING(str2)->as.heap.len = RSTRING_LEN(str);
 	RSTRING(str2)->as.heap.ptr = RSTRING_PTR(str);
 	RSTRING(str2)->as.heap.aux.shared = str;
@@ -3550,35 +3550,41 @@ rb_str_sub_bang(int argc, VALUE *argv, VALUE str)
 /*
  *  call-seq:
  *     str.sub(pattern, replacement)         -> new_str
+ *     str.sub(pattern, hash)                -> new_str
  *     str.sub(pattern) {|match| block }     -> new_str
- *     str.sub(pattern)                      -> an_enumerator
  *
  *  Returns a copy of <i>str</i> with the <em>first</em> occurrence of
- *  <i>pattern</i> replaced with either <i>replacement</i> or the value of the
- *  block. The <i>pattern</i> will typically be a <code>Regexp</code>; if it is
- *  a <code>String</code> then no regular expression metacharacters will be
- *  interpreted (that is <code>/\d/</code> will match a digit, but
- *  <code>'\d'</code> will match a backslash followed by a 'd').
+ *  <i>pattern</i> substituted for the second argument. The <i>pattern</i> is
+ *  typically a <code>Regexp</code>; if given as a <code>String</code>, any
+ *  regular expression metacharacters it contains will be interpreted
+ *  literally, e.g. <code>'\\\d'</code> will match a backlash followed by 'd',
+ *  instead of a digit.
  *
- *  If the method call specifies <i>replacement</i>, special variables such as
- *  <code>$&</code> will not be useful, as substitution into the string occurs
- *  before the pattern match starts. However, the sequences <code>\1</code>,
- *  <code>\2</code>, <code>\k<group_name></code>, etc., may be used.
+ *  If <i>replacement</i> is a <code>String</code> it will be substituted for
+ *  the matched text. It may contain back-references to the pattern's capture
+ *  groups of the form <code>\\\d</code>, where <i>d</i> is a group number, or
+ *  <code>\\\k<n></code>, where <i>n</i> is a group name. If it is a
+ *  double-quoted string, both back-references must be preceded by an
+ *  additional backslash. However, within <i>replacement</i> the special match
+ *  variables, such as <code>&$</code>, will not refer to the current match.
  *
- *  In the block form, the current match string is passed in as a parameter, and
- *  variables such as <code>$1</code>, <code>$2</code>, <code>$`</code>,
+ *  If the second argument is a <code>Hash</code>, and the matched text is one
+ *  of its keys, the corresponding value is the replacement string.
+ *
+ *  In the block form, the current match string is passed in as a parameter,
+ *  and variables such as <code>$1</code>, <code>$2</code>, <code>$`</code>,
  *  <code>$&</code>, and <code>$'</code> will be set appropriately. The value
  *  returned by the block will be substituted for the match on each call.
- *
- *  If no block and no <i>replacement</i> is given, an enumerator is returned instead.
  *
  *  The result inherits any tainting in the original string or any supplied
  *  replacement string.
  *
  *     "hello".sub(/[aeiou]/, '*')                  #=> "h*llo"
  *     "hello".sub(/([aeiou])/, '<\1>')             #=> "h<e>llo"
- *     "hello".sub(/./) {|s| s[0].ord.to_s + ' ' }  #=> "104 ello"
+ *     "hello".sub(/./) {|s| s.ord.to_s + ' ' }     #=> "104 ello"
  *     "hello".sub(/(?<foo>[aeiou])/, '*\k<foo>*')  #=> "h*e*llo"
+ *     'Is SHELL your preferred shell?'.sub(/[[:upper:]]{2,}/, ENV)
+ *      #=> "Is /bin/bash your preferred shell?"
  */
 
 static VALUE
@@ -3705,9 +3711,11 @@ str_gsub(int argc, VALUE *argv, VALUE str, int bang)
  *  call-seq:
  *     str.gsub!(pattern, replacement)        -> str or nil
  *     str.gsub!(pattern) {|match| block }    -> str or nil
+ *     str.gsub!(pattern)                     -> an_enumerator
  *
  *  Performs the substitutions of <code>String#gsub</code> in place, returning
  *  <i>str</i>, or <code>nil</code> if no substitutions were performed.
+ *  If no block and no <i>replacement</i> is given, an enumerator is returned instead.
  */
 
 static VALUE
@@ -3721,34 +3729,44 @@ rb_str_gsub_bang(int argc, VALUE *argv, VALUE str)
 /*
  *  call-seq:
  *     str.gsub(pattern, replacement)       -> new_str
+ *     str.gsub(pattern, hash)              -> new_str
  *     str.gsub(pattern) {|match| block }   -> new_str
+ *     str.gsub(pattern)                    -> enumerator
  *
- *  Returns a copy of <i>str</i> with <em>all</em> occurrences of <i>pattern</i>
- *  replaced with either <i>replacement</i> or the value of the block. The
- *  <i>pattern</i> will typically be a <code>Regexp</code>; if it is a
- *  <code>String</code> then no regular expression metacharacters will be
- *  interpreted (that is <code>/\d/</code> will match a digit, but
- *  <code>'\d'</code> will match a backslash followed by a 'd').
+ *  Returns a copy of <i>str</i> with the <em>all</em> occurrences of
+ *  <i>pattern</i> substituted for the second argument. The <i>pattern</i> is
+ *  typically a <code>Regexp</code>; if given as a <code>String</code>, any
+ *  regular expression metacharacters it contains will be interpreted
+ *  literally, e.g. <code>'\\\d'</code> will match a backlash followed by 'd',
+ *  instead of a digit.
  *
- *  If a string is used as the replacement, special variables from the match
- *  (such as <code>$&</code> and <code>$1</code>) cannot be substituted into it,
- *  as substitution into the string occurs before the pattern match
- *  starts. However, the sequences <code>\1</code>, <code>\2</code>,
- *  <code>\k<group_name></code>, and so on may be used to interpolate
- *  successive groups in the match.
+ *  If <i>replacement</i> is a <code>String</code> it will be substituted for
+ *  the matched text. It may contain back-references to the pattern's capture
+ *  groups of the form <code>\\\d</code>, where <i>d</i> is a group number, or
+ *  <code>\\\k<n></code>, where <i>n</i> is a group name. If it is a
+ *  double-quoted string, both back-references must be preceded by an
+ *  additional backslash. However, within <i>replacement</i> the special match
+ *  variables, such as <code>&$</code>, will not refer to the current match.
  *
- *  In the block form, the current match string is passed in as a parameter, and
- *  variables such as <code>$1</code>, <code>$2</code>, <code>$`</code>,
+ *  If the second argument is a <code>Hash</code>, and the matched text is one
+ *  of its keys, the corresponding value is the replacement string.
+ *
+ *  In the block form, the current match string is passed in as a parameter,
+ *  and variables such as <code>$1</code>, <code>$2</code>, <code>$`</code>,
  *  <code>$&</code>, and <code>$'</code> will be set appropriately. The value
  *  returned by the block will be substituted for the match on each call.
  *
  *  The result inherits any tainting in the original string or any supplied
  *  replacement string.
  *
+ *  When neither a block nor a second argument is supplied, an
+ *  <code>Enumerator</code> is returned.
+ *
  *     "hello".gsub(/[aeiou]/, '*')                  #=> "h*ll*"
  *     "hello".gsub(/([aeiou])/, '<\1>')             #=> "h<e>ll<o>"
- *     "hello".gsub(/./) {|s| s[0].ord.to_s + ' '}   #=> "104 101 108 108 111 "
+ *     "hello".gsub(/./) {|s| s.ord.to_s + ' '}      #=> "104 101 108 108 111 "
  *     "hello".gsub(/(?<foo>[aeiou])/, '{\k<foo>}')  #=> "h{e}ll{o}"
+ *     'hello'.gsub(/[eo]/, 'e' => 3, 'o' => '*')    #=> "h3ll*"
  */
 
 static VALUE
@@ -4078,6 +4096,41 @@ str_cat_char(VALUE str, unsigned int c, rb_encoding *enc)
 }
 #endif
 
+#define CHAR_ESC_LEN 13 /* sizeof(\x{ hex of 32bit unsigned int } \0) */
+
+int
+rb_str_buf_cat_escaped_char(VALUE result, unsigned int c, int unicode_p)
+{
+    char buf[CHAR_ESC_LEN + 1];
+    int l;
+
+#if SIZEOF_INT > 4
+    c &= 0xffffffff;
+#endif
+    if (unicode_p) {
+	if (c < 0x7F && ISPRINT(c)) {
+	    snprintf(buf, CHAR_ESC_LEN, "%c", c);
+	}
+	else if (c < 0x10000) {
+	    snprintf(buf, CHAR_ESC_LEN, "\\u%04X", c);
+	}
+	else {
+	    snprintf(buf, CHAR_ESC_LEN, "\\u{%X}", c);
+	}
+    }
+    else {
+	if (c < 0x100) {
+	    snprintf(buf, CHAR_ESC_LEN, "\\x%02X", c);
+	}
+	else {
+	    snprintf(buf, CHAR_ESC_LEN, "\\x{%X}", c);
+	}
+    }
+    l = (int)strlen(buf);	/* CHAR_ESC_LEN cannot exceed INT_MAX */
+    rb_str_buf_cat(result, buf, l);
+    return l;
+}
+
 /*
  * call-seq:
  *   str.inspect   -> string
@@ -4095,11 +4148,11 @@ rb_str_inspect(VALUE str)
 {
     rb_encoding *enc = STR_ENC_GET(str);
     const char *p, *pend, *prev;
-#define CHAR_ESC_LEN 13 /* sizeof(\x{ hex of 32bit unsigned int } \0) */
     char buf[CHAR_ESC_LEN + 1];
     VALUE result = rb_str_buf_new(0);
     rb_encoding *resenc = rb_default_internal_encoding();
     int unicode_p = rb_enc_unicode_p(enc);
+    int asciicompat = rb_enc_asciicompat(enc);
 
     if (resenc == NULL) resenc = rb_default_external_encoding();
     if (!rb_enc_asciicompat(resenc)) resenc = rb_usascii_encoding();
@@ -4159,29 +4212,12 @@ rb_str_inspect(VALUE str)
 	    continue;
 	}
 	if ((enc == resenc && rb_enc_isprint(c, enc)) ||
-	    (rb_enc_isascii(c, enc) && ISPRINT(c))) {
+	    (asciicompat && rb_enc_isascii(c, enc) && ISPRINT(c))) {
 	    continue;
 	}
 	else {
 	    if (p - n > prev) str_buf_cat(result, prev, p - n - prev);
-	    if (unicode_p) {
-		if (c < 0x10000) {
-		    snprintf(buf, CHAR_ESC_LEN, "\\u%04X", c);
-		}
-		else {
-		    snprintf(buf, CHAR_ESC_LEN, "\\u{%X}", c);
-		}
-		str_buf_cat(result, buf, strlen(buf));
-	    }
-	    else {
-		if (c < 0x100) {
-		    snprintf(buf, CHAR_ESC_LEN, "\\x%02X", c);
-		}
-		else {
-		    snprintf(buf, CHAR_ESC_LEN, "\\x{%X}", c);
-		}
-		str_buf_cat(result, buf, strlen(buf));
-	    }
+	    rb_str_buf_cat_escaped_char(result, c, unicode_p);
 	    prev = p;
 	    continue;
 	}
@@ -7062,17 +7098,31 @@ sym_inspect(VALUE sym)
     VALUE str;
     ID id = SYM2ID(sym);
     rb_encoding *enc;
+    const char *ptr;
+    long len;
+    char *dest;
+    rb_encoding *resenc = rb_default_internal_encoding();
 
+    if (resenc == NULL) resenc = rb_default_external_encoding();
     sym = rb_id2str(id);
     enc = STR_ENC_GET(sym);
-    str = rb_enc_str_new(0, RSTRING_LEN(sym)+1, enc);
-    RSTRING_PTR(str)[0] = ':';
-    memcpy(RSTRING_PTR(str)+1, RSTRING_PTR(sym), RSTRING_LEN(sym));
-    if (RSTRING_LEN(sym) != (long)strlen(RSTRING_PTR(sym)) ||
-	!rb_enc_symname_p(RSTRING_PTR(sym), enc) ||
-	!sym_printable(RSTRING_PTR(sym), RSTRING_END(sym), enc)) {
-	str = rb_str_inspect(str);
-	memcpy(RSTRING_PTR(str), ":\"", 2);
+    ptr = RSTRING_PTR(sym);
+    len = RSTRING_LEN(sym);
+    if ((resenc != enc && !rb_str_is_ascii_only_p(sym)) || len != (long)strlen(ptr) ||
+	!rb_enc_symname_p(ptr, enc) || !sym_printable(ptr, ptr + len, enc)) {
+	str = rb_str_inspect(sym);
+	len = RSTRING_LEN(str);
+	rb_str_resize(str, len + 1);
+	dest = RSTRING_PTR(str);
+	memmove(dest + 1, dest, len);
+	dest[0] = ':';
+    }
+    else {
+	char *dest;
+	str = rb_enc_str_new(0, len + 1, enc);
+	dest = RSTRING_PTR(str);
+	dest[0] = ':';
+	memcpy(dest + 1, ptr, len);
     }
     return str;
 }

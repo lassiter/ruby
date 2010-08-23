@@ -448,8 +448,8 @@ vm_method_missing(rb_thread_t *th, ID id, VALUE recv,
 }
 
 static inline void
-vm_setup_method(rb_thread_t *th, rb_control_frame_t *cfp, 
-		VALUE recv, int argc, const rb_block_t *blockptr, VALUE flag, 
+vm_setup_method(rb_thread_t *th, rb_control_frame_t *cfp,
+		VALUE recv, int argc, const rb_block_t *blockptr, VALUE flag,
 		const rb_method_entry_t *me)
 {
     int opt_pc, i;
@@ -1400,6 +1400,11 @@ vm_search_superclass(rb_control_frame_t *reg_cfp, rb_iseq_t *ip,
 		    break;
 		}
 	    }
+	}
+
+	/* temporary measure for [Bug #2420] [Bug #3136] */
+	if (!lcfp->me) {
+	    rb_raise(rb_eNoMethodError, "super called outside of method");
 	}
 
 	id = lcfp->me->def->original_id;

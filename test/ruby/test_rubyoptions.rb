@@ -319,10 +319,11 @@ class TestRubyOptions < Test::Unit::TestCase
   def test_notfound
     notexist = "./notexist.rb"
     rubybin = Regexp.quote(EnvUtil.rubybin)
-    pat = /\A#{rubybin}:.* -- #{Regexp.quote(notexist)} \(LoadError\)\Z/
+    pat = Regexp.quote(notexist)
+    bug1573 = '[ruby-core:23717]'
     assert_equal(false, File.exist?(notexist))
-    assert_in_out_err(["-r", notexist, "-ep"], "", [], pat)
-    assert_in_out_err([notexist], "", [], pat)
+    assert_in_out_err(["-r", notexist, "-ep"], "", [], /.* -- #{pat} \(LoadError\)/, bug1573)
+    assert_in_out_err([notexist], "", [], /#{rubybin}:.* -- #{pat} \(LoadError\)/, bug1573)
   end
 
   def test_program_name
@@ -399,5 +400,49 @@ class TestRubyOptions < Test::Unit::TestCase
       )x,
       nil,
       opts)
+  end
+
+  def test_DATA
+    t = Tempfile.new(["test_ruby_test_rubyoption", ".rb"])
+    t.puts "puts DATA.read.inspect"
+    t.puts "__END__"
+    t.puts "foo"
+    t.puts "bar"
+    t.puts "baz"
+    t.close
+    assert_in_out_err([t.path], "", %w("foo\\nbar\\nbaz\\n"), [])
+  ensure
+    t.close(true) if t
+  end
+
+  def test_script_from_stdin
+    begin
+      require 'pty'
+      require 'io/console'
+    rescue LoadError
+      return
+    end
+    require 'timeout'
+    result = nil
+    s, w = IO.pipe
+    PTY.spawn(EnvUtil.rubybin, out: w) do |r, m|
+      w.close
+      m.print("\C-d")
+      assert_nothing_raised('[ruby-dev:37798]') do
+        result = Timeout.timeout(3) {s.read}
+      end
+    end
+    s.close
+    assert_equal("", result, '[ruby-dev:37798]')
+    s, w = IO.pipe
+    PTY.spawn(EnvUtil.rubybin, out: w) do |r, m|
+      w.close
+      m.print("$stdin.read; p $stdin.gets\n\C-d")
+      m.print("abc\n\C-d")
+      m.print("zzz\n")
+      result = s.read
+    end
+    s.close
+    assert_equal("\"zzz\\n\"\n", result, '[ruby-core:30910]')
   end
 end

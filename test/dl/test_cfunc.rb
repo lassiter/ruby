@@ -59,16 +59,22 @@ module DL
       assert_equal @cf.inspect, @cf.to_s
     end
 
+    def test_inspect_is_tainted
+      assert @cf.inspect.tainted?, 'inspect is tainted'
+    end
+
     def test_to_i
       assert_equal @cf.to_i, @cf.ptr
       assert_equal @libc[@name], @cf.to_i
     end
 
     def test_last_error
-      f = Function.new(@cf, [TYPE_VOIDP, TYPE_VOIDP])
-      assert_nil CFunc.last_error
-      str = f.call("000", "123")
-      assert_not_nil CFunc.last_error
+      Thread.new do
+        f = Function.new(@cf, [TYPE_VOIDP, TYPE_VOIDP])
+        assert_nil CFunc.last_error
+        str = f.call("000", "123")
+        assert_not_nil CFunc.last_error
+      end.join
     end
   end
 end

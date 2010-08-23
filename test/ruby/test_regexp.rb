@@ -1,4 +1,5 @@
 require 'test/unit'
+require_relative 'envutil'
 
 class TestRegexp < Test::Unit::TestCase
   def setup
@@ -8,6 +9,11 @@ class TestRegexp < Test::Unit::TestCase
 
   def teardown
     $VERBOSE = @verbose
+  end
+
+  def test_ruby_dev_999
+    assert_match(/(?<=a).*b/, "aab")
+    assert_match(/(?<=\u3042).*b/, "\u3042ab")
   end
 
   def test_ruby_core_27247
@@ -149,8 +155,8 @@ class TestRegexp < Test::Unit::TestCase
     assert_equal('/\/x/i', /\/x/i.inspect)
     assert_equal('/\x00/i', /#{"\0"}/i.inspect)
     assert_equal("/\n/i", /#{"\n"}/i.inspect)
-    s = [0xff].pack("C")
-    assert_equal('/\/'+s+'/i', /\/#{s}/i.inspect)
+    s = [0xf1, 0xf2, 0xf3].pack("C*")
+    assert_equal('/\/\xF1\xF2\xF3/i', /\/#{s}/i.inspect)
   end
 
   def test_char_to_option
@@ -810,10 +816,23 @@ class TestRegexp < Test::Unit::TestCase
     assert_nothing_raised { s.match(/(\d) (.*)/) }
     assert_equal("1", $1)
     assert_equal(" " * 4999999, $2)
+    assert_match(/(?:A.+){2}/, 'AbAb')
   end
 
   def test_invalid_fragment
     bug2547 = '[ruby-core:27374]'
     assert_raise(SyntaxError, bug2547) {eval('/#{"\\\\"}y/')}
+  end
+
+  def test_dup_warn
+    assert_in_out_err(%w/-w -U/, "#coding:utf-8\nx=/[\u3042\u3041]/\n!x", [], [])
+    assert_in_out_err(%w/-w -U/, "#coding:utf-8\nx=/[\u3042\u3042]/\n!x", [], /duplicated/u, nil,
+                      encoding: Encoding::UTF_8)
+    assert_in_out_err(%w/-w -U/, "#coding:utf-8\nx=/[\u3042\u3041-\u3043]/\n!x", [], /duplicated/u, nil,
+                      encoding: Encoding::UTF_8)
+  end
+
+  def test_property_warn
+    assert_in_out_err('-w', 'x=/\p%s/', [], %r"warning: invalid Unicode Property \\p: /\\p%s/")
   end
 end

@@ -420,7 +420,8 @@ enc_ascii_compatible_p(VALUE enc)
 int
 rb_enc_unicode_p(rb_encoding *enc)
 {
-    return rb_utf8_encoding()->is_code_ctype == enc->is_code_ctype;
+    const char *name = rb_enc_name(enc);
+    return name[0] == 'U' && name[1] == 'T' && name[2] == 'F' && name[4] != '7';
 }
 
 static const char *
@@ -1114,7 +1115,7 @@ rb_usascii_encindex(void)
     return ENCINDEX_US_ASCII;
 }
 
-static int
+int
 rb_locale_encindex(void)
 {
     VALUE charmap = rb_locale_charmap(rb_cEncoding);
@@ -1155,12 +1156,12 @@ enc_set_filesystem_encoding(void)
     return idx;
 }
 
-static int
+int
 rb_filesystem_encindex(void)
 {
     int idx = rb_enc_registered("filesystem");
     if (idx < 0)
-	idx = enc_set_filesystem_encoding();
+	idx = rb_ascii8bit_encindex();
     return idx;
 }
 

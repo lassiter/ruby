@@ -280,6 +280,7 @@ struct heaps_slot {
     void *membase;
     RVALUE *slot;
     size_t limit;
+    int finalize_flag;
 };
 
 #define HEAP_MIN_SLOTS 10000
@@ -938,6 +939,7 @@ assign_heap_slot(rb_objspace_t *objspace)
     heaps[hi].membase = membase;
     heaps[hi].slot = p;
     heaps[hi].limit = objs;
+    heaps[hi].finalize_flag = FALSE;
     pend = p + objs;
     if (lomem == 0 || lomem > p) lomem = p;
     if (himem < pend) himem = pend;
@@ -1874,6 +1876,8 @@ gc_sweep(rb_objspace_t *objspace)
 	RVALUE *final = final_list;
 	int deferred;
 
+	if(heaps[i].finalize_flag) continue;
+
 	p = heaps[i].slot; pend = p + heaps[i].limit;
 	while (p < pend) {
 	    if (!(p->as.basic.flags & FL_MARK)) {
@@ -1912,7 +1916,7 @@ gc_sweep(rb_objspace_t *objspace)
 		pp->as.free.flags |= FL_SINGLETON; /* freeing page mark */
 	    }
 	    heaps[i].limit = final_num;
-
+	    heaps[i].finalize_flag = TRUE;
 	    freelist = free;	/* cancel this page from freelist */
 	}
 	else {
@@ -2347,11 +2351,11 @@ rb_objspace_each_objects(int (*callback)(void *vstart, void *vend,
     i = 0;
     while (i < heaps_used) {
 	while (0 < i && (uintptr_t)membase < (uintptr_t)heaps[i-1].membase)
-	  i--;
+	    i--;
 	while (i < heaps_used && (uintptr_t)heaps[i].membase <= (uintptr_t)membase )
-	  i++;
+	    i++;
 	if (heaps_used <= i)
-	  break;
+	    break;
 	membase = heaps[i].membase;
 
 	pstart = heaps[i].slot;
@@ -2661,7 +2665,7 @@ force_chain_object(st_data_t key, st_data_t val, st_data_t arg)
     curr->table = val;
     curr->next = *prev;
     *prev = curr;
-    return ST_DELETE;
+    return ST_CONTINUE;
 }
 
 void
@@ -2694,6 +2698,7 @@ rb_objspace_call_finalizer(rb_objspace_t *objspace)
 	    while (list) {
 		struct force_finalize_list *curr = list;
 		run_finalizer(objspace, curr->obj, rb_obj_id(curr->obj), curr->table);
+		st_delete(finalizer_table, (st_data_t*)&curr->obj, 0);
 		list = curr->next;
 		xfree(curr);
 	    }

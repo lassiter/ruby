@@ -397,7 +397,7 @@ collect_local_variables_in_iseq(rb_iseq_t *iseq, const VALUE ary)
 static int
 collect_local_variables_in_env(rb_env_t * env, const VALUE ary)
 {
-    
+
     while (collect_local_variables_in_iseq(env->block.iseq, ary),
 	   env->prev_envval) {
 	GetEnvPtr(env->prev_envval, env);
@@ -761,8 +761,14 @@ vm_backtrace_push(void *arg, VALUE file, int line_no, VALUE name)
     VALUE *aryp = arg;
     VALUE bt;
 
-    bt = rb_enc_sprintf(rb_enc_compatible(file, name), "%s:%d:in `%s'",
-			RSTRING_PTR(file), line_no, RSTRING_PTR(name));
+    if (line_no) {
+	bt = rb_enc_sprintf(rb_enc_compatible(file, name), "%s:%d:in `%s'",
+			    RSTRING_PTR(file), line_no, RSTRING_PTR(name));
+    }
+    else {
+	bt = rb_enc_sprintf(rb_enc_compatible(file, name), "%s:in `%s'",
+			    RSTRING_PTR(file), RSTRING_PTR(name));
+    }
     rb_ary_push(*aryp, bt);
     return 0;
 }
@@ -1444,11 +1450,11 @@ rb_thread_current_status(const rb_thread_t *th)
 
 VALUE
 rb_vm_call_cfunc(VALUE recv, VALUE (*func)(VALUE), VALUE arg,
-		 const rb_block_t *blockptr, VALUE filename)
+		 const rb_block_t *blockptr, VALUE filename, VALUE filepath)
 {
     rb_thread_t *th = GET_THREAD();
     const rb_control_frame_t *reg_cfp = th->cfp;
-    volatile VALUE iseqval = rb_iseq_new(0, filename, filename, filename, 0, ISEQ_TYPE_TOP);
+    volatile VALUE iseqval = rb_iseq_new(0, filename, filename, filepath, 0, ISEQ_TYPE_TOP);
     VALUE val;
 
     vm_push_frame(th, DATA_PTR(iseqval), VM_FRAME_MAGIC_TOP,
@@ -1640,8 +1646,11 @@ rb_thread_mark(void *ptr)
 	    rb_gc_mark_locations(p, p + th->mark_stack_len);
 
 	    while (cfp != limit_cfp) {
+		rb_iseq_t *iseq = cfp->iseq;
 		rb_gc_mark(cfp->proc);
-		if (cfp->iseq) rb_gc_mark(cfp->iseq->self);
+		if (iseq) {
+		    rb_gc_mark(RUBY_VM_NORMAL_ISEQ_P(iseq) ? iseq->self : (VALUE)iseq);
+		}
 		if (cfp->me) ((rb_method_entry_t *)cfp->me)->mark = 1;
 		cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
 	    }
@@ -1720,6 +1729,11 @@ thread_free(void *ptr)
 	    RUBY_GC_INFO("main thread\n");
 	}
 	else {
+#ifdef USE_SIGALTSTACK
+	    if (th->altstack) {
+		free(th->altstack);
+	    }
+#endif
 	    ruby_xfree(ptr);
 	}
     }
@@ -2104,6 +2118,8 @@ struct rb_objspace *rb_objspace_alloc(void);
 #endif
 void ruby_thread_init_stack(rb_thread_t *th);
 
+extern void Init_native_thread(void);
+
 void
 Init_BareVM(void)
 {
@@ -2124,6 +2140,7 @@ Init_BareVM(void)
 #endif
     ruby_current_vm = vm;
 
+    Init_native_thread();
     th_init2(th, 0);
     th->vm = vm;
     ruby_thread_init_stack(th);

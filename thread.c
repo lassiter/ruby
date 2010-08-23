@@ -125,8 +125,8 @@ static inline void blocking_region_end(rb_thread_t *th, struct rb_blocking_regio
 #define blocking_region_begin(th, region, func, arg) \
   do { \
     (region)->prev_status = (th)->status; \
-    (th)->blocking_region_buffer = (region); \
     set_unblock_function((th), (func), (arg), &(region)->oldubf); \
+    (th)->blocking_region_buffer = (region); \
     (th)->status = THREAD_STOPPED; \
     thread_debug("enter blocking region (%p)\n", (void *)(th)); \
     RB_GC_SAVE_MACHINE_CONTEXT(th); \
@@ -2285,7 +2285,7 @@ rb_fd_resize(int n, rb_fdset_t *fds)
     if (o < sizeof(fd_set)) o = sizeof(fd_set);
 
     if (m > o) {
-	fds->fdset = realloc(fds->fdset, m);
+	fds->fdset = xrealloc(fds->fdset, m);
 	memset((char *)fds->fdset + o, 0, m - o);
     }
     if (n >= fds->maxfd) fds->maxfd = n + 1;
@@ -2319,7 +2319,7 @@ rb_fd_copy(rb_fdset_t *dst, const fd_set *src, int max)
 
     if (size < sizeof(fd_set)) size = sizeof(fd_set);
     dst->maxfd = max;
-    dst->fdset = realloc(dst->fdset, size);
+    dst->fdset = xrealloc(dst->fdset, size);
     memcpy(dst->fdset, src, size);
 }
 
@@ -3725,7 +3725,7 @@ thread_reset_event_flags(rb_thread_t *th)
 }
 
 static void
-rb_threadptr_add_event_hook(rb_thread_t *th, 
+rb_threadptr_add_event_hook(rb_thread_t *th,
 			 rb_event_hook_func_t func, rb_event_flag_t events, VALUE data)
 {
     rb_event_hook_t *hook = alloc_event_hook(func, events, data);
@@ -4239,7 +4239,6 @@ Init_Thread(void)
     rb_define_method(rb_cThread, "add_trace_func", thread_add_trace_func_m, 1);
 
     /* init thread core */
-    Init_native_thread();
     {
 	/* main thread setting */
 	{

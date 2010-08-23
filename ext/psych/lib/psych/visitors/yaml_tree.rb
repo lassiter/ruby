@@ -123,14 +123,14 @@ module Psych
         @emitter.scalar o.inspect, nil, '!ruby/regexp', false, false, Nodes::Scalar::ANY
       end
 
-      def visit_Time o
-        formatted = o.strftime("%Y-%m-%d %H:%M:%S")
-        if o.utc?
-          formatted += ".%06dZ" % [o.usec]
-        else
-          formatted += ".%06d %+.2d:00" % [o.usec, o.gmt_offset / 3600]
-        end
+      def visit_DateTime o
+        formatted = format_time o.to_time
+        tag = '!ruby/object:DateTime'
+        @emitter.scalar formatted, nil, tag, false, false, Nodes::Scalar::ANY
+      end
 
+      def visit_Time o
+        formatted = format_time o
         @emitter.scalar formatted, nil, nil, true, false, Nodes::Scalar::ANY
       end
 
@@ -256,6 +256,17 @@ module Psych
       end
 
       private
+      def format_time time
+        formatted = time.strftime("%Y-%m-%d %H:%M:%S.%9N")
+        if time.utc?
+          formatted += "Z"
+        else
+          zone = time.strftime('%z')
+          formatted += " #{zone[0,3]}:#{zone[3,5]}"
+        end
+        formatted
+      end
+
       # FIXME: remove this method once "to_yaml_properties" is removed
       def find_ivars target
         loc = target.method(:to_yaml_properties).source_location.first

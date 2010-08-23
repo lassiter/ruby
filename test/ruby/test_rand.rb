@@ -357,6 +357,9 @@ END
     v = r.rand(3.1..4)
     assert_instance_of(Float, v, '[ruby-core:24679]')
     assert_includes(3.1..4, v)
+
+    now = Time.now
+    assert_equal(now, r.rand(now..now))
   end
 
   def test_random_float
@@ -395,7 +398,7 @@ END
         raise 'default seed is not set' if srand == 0
     end
     p2, st = Process.waitpid2(pid)
-    assert(st.success?)
+    assert(st.success?, "#{st.inspect}")
   rescue NotImplementedError, ArgumentError
   end
 
@@ -410,6 +413,13 @@ END
       r1 = Random.new(n).rand
       r2 = Random.new(b).rand
       assert_equal(r1, r2)
+    }
+  end
+
+  def test_marshal
+    bug3656 = '[ruby-core:31622]'
+    assert_raise(TypeError, bug3656) {
+      Random.new.marshal_load(0)
     }
   end
 end

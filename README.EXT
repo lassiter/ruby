@@ -1167,9 +1167,13 @@ Sets the value of the instance variable.
 		     VALUE (*func) (ANYARGS), VALUE data2)
 
 Calls a method on the recv, with the method name specified by the
-symbol mid, supplying func as the block.  func will receive the
-value from yield as the first argument, data2 as the second, and
-argc/argv as the third/fourth arguments.
+symbol mid, with argc arguments in argv, supplying func as the
+block. When func is called as the block, it will receive the value
+from yield as the first argument, and data2 as the second argument.
+When yielded with multiple values (in C, rb_yield_values(),
+rb_yield_values2() and rb_yield_splat()), data2 is packed as an Array,
+whereas yielded values can be gotten via argc/argv of the third/fourth
+arguments.
 
  [OBSOLETE] VALUE rb_iterate(VALUE (*func1)(), void *arg1, VALUE (*func2)(), void *arg2)
 
@@ -1184,14 +1188,14 @@ This function is obsolete since 1.9; use rb_block_call instead.
 
 Evaluates the block with value val.
 
- VALUE rb_rescue(VALUE (*func1)(), void *arg1, VALUE (*func2)(), void *arg2)
+ VALUE rb_rescue(VALUE (*func1)(), VALUE arg1, VALUE (*func2)(), VALUE arg2)
 
 Calls the function func1, with arg1 as the argument.  If an exception
 occurs during func1, it calls func2 with arg2 as the argument.  The
 return value of rb_rescue() is the return value from func1 if no
 exception occurs, from func2 otherwise.
 
- VALUE rb_ensure(VALUE (*func1)(), void *arg1, void (*func2)(), void *arg2)
+ VALUE rb_ensure(VALUE (*func1)(), VALUE arg1, VALUE (*func2)(), VALUE arg2)
 
 Calls the function func1 with arg1 as the argument, then calls func2
 with arg2 if execution terminated.  The return value from

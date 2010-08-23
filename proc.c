@@ -871,6 +871,7 @@ bm_free(void *ptr)
 	xfree(def);
     else if (def->alias_count > 0)
 	def->alias_count--;
+    xfree(ptr);
 }
 
 static size_t
@@ -1332,7 +1333,7 @@ rb_mod_define_method(int argc, VALUE *argv, VALUE mod)
  *
  *  Defines a singleton method in the receiver. The _method_
  *  parameter can be a +Proc+, a +Method+ or an +UnboundMethod+ object.
- *  If a block is specified, it is used as the method body. 
+ *  If a block is specified, it is used as the method body.
  *
  *     class A
  *       class << self

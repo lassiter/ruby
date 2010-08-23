@@ -1610,7 +1610,7 @@ ary_join_1(VALUE obj, VALUE ary, VALUE sep, long i, VALUE result)
 	    }
 	    else {
 		VALUE args[3];
-		
+
 		args[0] = val;
 		args[1] = sep;
 		args[2] = result;
@@ -1865,7 +1865,7 @@ rb_ary_rotate(VALUE ary, long cnt)
 
     return Qnil;
 }
-    
+
 /*
  *  call-seq:
  *     ary.rotate!(cnt=1) -> ary
@@ -4294,9 +4294,9 @@ static VALUE
 rb_ary_product(int argc, VALUE *argv, VALUE ary)
 {
     int n = argc+1;    /* How many arrays we're operating on */
-    volatile VALUE t0 = tmpbuf(n, sizeof(VALUE));
+    volatile VALUE t0 = tmpary(n);
     volatile VALUE t1 = tmpbuf(n, sizeof(int));
-    VALUE *arrays = (VALUE*)RSTRING_PTR(t0); /* The arrays we're computing the product of */
+    VALUE *arrays = RARRAY_PTR(t0); /* The arrays we're computing the product of */
     int *counters = (int*)RSTRING_PTR(t1); /* The current position in each one */
     VALUE result = Qnil;      /* The array we'll be returning, when no block given */
     long i,j;
@@ -4306,7 +4306,9 @@ rb_ary_product(int argc, VALUE *argv, VALUE ary)
     RBASIC(t1)->klass = 0;
 
     /* initialize the arrays of arrays */
+    ARY_SET_LEN(t0, n);
     arrays[0] = ary;
+    for (i = 1; i < n; i++) arrays[i] = Qnil;
     for (i = 1; i < n; i++) arrays[i] = to_ary(argv[i-1]);
 
     /* initialize the counters for the arrays */
@@ -4345,9 +4347,13 @@ rb_ary_product(int argc, VALUE *argv, VALUE ary)
 
 	/* put it on the result array */
 	if(NIL_P(result)) {
+	    FL_SET(t0, FL_USER5);
 	    rb_yield(subarray);
-	    if (RBASIC(t0)->klass) {
+	    if (! FL_TEST(t0, FL_USER5)) {
 		rb_raise(rb_eRuntimeError, "product reentered");
+	    }
+	    else {
+		FL_UNSET(t0, FL_USER5);
 	    }
 	}
 	else {
@@ -4368,7 +4374,7 @@ rb_ary_product(int argc, VALUE *argv, VALUE ary)
 	}
     }
 done:
-    tmpbuf_discard(t0);
+    tmpary_discard(t0);
     tmpbuf_discard(t1);
 
     return NIL_P(result) ? ary : result;

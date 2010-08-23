@@ -44,7 +44,7 @@ ruby_thread_set_native(rb_thread_t *th)
     return TlsSetValue(ruby_native_thread_key, th);
 }
 
-static void
+void
 Init_native_thread(void)
 {
     rb_thread_t *th = GET_THREAD();
@@ -507,7 +507,7 @@ native_thread_create(rb_thread_t *th)
 static void
 native_thread_join(HANDLE th)
 {
-    w32_wait_events(&th, 1, 0, 0);
+    w32_wait_events(&th, 1, INFINITE, 0);
 }
 
 #if USE_NATIVE_THREAD_PRIORITY

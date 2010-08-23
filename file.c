@@ -191,8 +191,11 @@ rb_str_encode_ospath(VALUE path)
 	if (enc != utf8)
 	    path = rb_str_encode(path, rb_enc_from_encoding(utf8), 0, Qnil);
     }
-    else if (RSTRING_LEN(path) > 0)
-	path = rb_str_encode(path, rb_enc_from_encoding(rb_filesystem_encoding()), 0, Qnil);
+    else if (RSTRING_LEN(path) > 0) {
+	path = rb_str_dup(path);
+	rb_enc_associate(path, rb_filesystem_encoding());
+	path = rb_str_encode(path, rb_enc_from_encoding(rb_utf8_encoding()), 0, Qnil);
+    }
 #endif
     return path;
 }
@@ -1053,16 +1056,6 @@ access_internal(const char *path, int mode)
  */
 
 /*
- *   File.directory?(file_name)   ->  true or false
- *   File.directory?(file_name)   ->  true or false
- *
- * Returns <code>true</code> if the named file is a directory,
- * <code>false</code> otherwise.
- *
- *    File.directory?(".")
- */
-
-/*
  * Document-method: exist?
  *
  * call-seq:
@@ -1081,7 +1074,8 @@ access_internal(const char *path, int mode)
  *   File.directory?(file_name)   ->  true or false
  *
  * Returns <code>true</code> if the named file is a directory,
- * <code>false</code> otherwise.
+ * or a symlink that points at a directory, and <code>false</code>
+ * otherwise.
  *
  *    File.directory?(".")
  */
@@ -2705,6 +2699,18 @@ rb_path_skip_prefix(const char *path)
     return (char *)path;
 }
 
+static inline char *
+skipprefixroot(const char *path)
+{
+#if defined(DOSISH_UNC) || defined(DOSISH_DRIVE_LETTER)
+    char *p = skipprefix(path);
+    while (isdirsep(*p)) p++;
+    return p;
+#else
+    return skiproot(path);
+#endif
+}
+
 #define strrdirsep rb_path_last_separator
 char *
 rb_path_last_separator(const char *path)
@@ -2788,10 +2794,6 @@ ntfs_tail(const char *path)
     buflen = RSTRING_LEN(result),\
     pend = p + buflen)
 
-#define SET_EXTERNAL_ENCODING() (\
-    (void)(extenc || (extenc = rb_default_external_encoding())),\
-    rb_enc_associate(result, extenc))
-
 VALUE
 rb_home_dir(const char *user, VALUE result)
 {
@@ -2832,6 +2834,7 @@ rb_home_dir(const char *user, VALUE result)
 	}
     }
 #endif
+    rb_enc_associate_index(result, rb_filesystem_encindex());
     return result;
 }
 
@@ -2842,13 +2845,13 @@ file_expand_path(VALUE fname, VALUE dname, int abs_mode, VALUE result)
     char *buf, *p, *pend, *root;
     size_t buflen, dirlen, bdiff;
     int tainted;
-    rb_encoding *extenc = 0;
 
     s = StringValuePtr(fname);
     BUFINIT();
     tainted = OBJ_TAINTED(fname);
 
     if (s[0] == '~' && abs_mode == 0) {      /* execute only if NOT absolute_path() */
+	long userlen = 0;
 	tainted = 1;
 	if (isdirsep(s[1]) || s[1] == '\0') {
 	    buf = 0;
@@ -2857,13 +2860,24 @@ file_expand_path(VALUE fname, VALUE dname, int abs_mode, VALUE result)
 	}
 	else {
 	    s = nextdirsep(b = s);
-	    BUFCHECK(bdiff + (s-b) >= buflen);
-	    memcpy(p, b, s-b);
-	    rb_str_set_len(result, s-b);
+	    userlen = s - b;
+	    BUFCHECK(bdiff + userlen >= buflen);
+	    memcpy(p, b, userlen);
+	    rb_str_set_len(result, userlen);
 	    buf = p + 1;
-	    p += s-b;
+	    p += userlen;
 	}
-	rb_home_dir(buf, result);
+	if (NIL_P(rb_home_dir(buf, result))) {
+	    rb_raise(rb_eArgError, "can't find user %s", buf);
+	}
+	if (!rb_is_absolute_path(RSTRING_PTR(result))) {
+	    if (userlen) {
+		rb_raise(rb_eArgError, "non-absolute home of %.*s", (int)userlen, b);
+	    }
+	    else {
+		rb_raise(rb_eArgError, "non-absolute home");
+	    }
+	}
 	BUFINIT();
 	p = pend;
     }
@@ -2882,7 +2896,7 @@ file_expand_path(VALUE fname, VALUE dname, int abs_mode, VALUE result)
 	else {
 	    /* specified drive, but not full path */
 	    int same = 0;
-	    if (!NIL_P(dname) || !not_same_drive(dname, s[0])) {
+	    if (!NIL_P(dname) && !not_same_drive(dname, s[0])) {
 		file_expand_path(dname, Qnil, abs_mode, result);
 		BUFINIT();
 		if (has_drive_letter(p) && TOLOWER(p[0]) == TOLOWER(s[0])) {
@@ -2898,8 +2912,10 @@ file_expand_path(VALUE fname, VALUE dname, int abs_mode, VALUE result)
 		BUFCHECK(dirlen > buflen);
 		strcpy(buf, dir);
 		xfree(dir);
-		SET_EXTERNAL_ENCODING();
+		rb_enc_associate_index(result, rb_filesystem_encindex());
 	    }
+	    else
+		rb_enc_associate(result, rb_enc_check(result, fname));
 	    p = chompdirsep(skiproot(buf));
 	    s += 2;
 	}
@@ -2909,6 +2925,7 @@ file_expand_path(VALUE fname, VALUE dname, int abs_mode, VALUE result)
 	if (!NIL_P(dname)) {
 	    file_expand_path(dname, Qnil, abs_mode, result);
 	    BUFINIT();
+	    rb_enc_associate(result, rb_enc_check(result, fname));
 	}
 	else {
 	    char *dir = my_getcwd();
@@ -2918,7 +2935,7 @@ file_expand_path(VALUE fname, VALUE dname, int abs_mode, VALUE result)
 	    BUFCHECK(dirlen > buflen);
 	    strcpy(buf, dir);
 	    xfree(dir);
-	    SET_EXTERNAL_ENCODING();
+	    rb_enc_associate_index(result, rb_filesystem_encindex());
 	}
 #if defined DOSISH || defined __CYGWIN__
 	if (isdirsep(*s)) {
@@ -3051,7 +3068,7 @@ file_expand_path(VALUE fname, VALUE dname, int abs_mode, VALUE result)
     }
     if (p == skiproot(buf) - 1) p++;
 
-#if USE_NTFS && defined __WIN32__
+#if USE_NTFS
     *p = '\0';
     if ((s = strrdirsep(b = buf)) != 0 && !strpbrk(s, "*?")) {
 	size_t len;
@@ -3211,7 +3228,7 @@ realpath_rec(long *prefixlenp, VALUE *resolvedp, char *unresolved, VALUE loopche
                 char *resolved_names = RSTRING_PTR(*resolvedp) + *prefixlenp;
                 char *lastsep = rb_path_last_separator(resolved_names);
                 long len = lastsep ? lastsep - resolved_names : 0;
-                rb_str_set_len(*resolvedp, *prefixlenp + len);
+                rb_str_resize(*resolvedp, *prefixlenp + len);
             }
         }
         else {
@@ -3233,7 +3250,8 @@ realpath_rec(long *prefixlenp, VALUE *resolvedp, char *unresolved, VALUE loopche
             else {
                 struct stat sbuf;
                 int ret;
-                ret = lstat(RSTRING_PTR(testpath), &sbuf);
+                VALUE testpath2 = rb_str_encode_ospath(testpath);
+                ret = lstat(RSTRING_PTR(testpath2), &sbuf);
                 if (ret == -1) {
                     if (errno == ENOENT) {
                         if (strict || !last || *unresolved_firstsep)
@@ -3253,7 +3271,7 @@ realpath_rec(long *prefixlenp, VALUE *resolvedp, char *unresolved, VALUE loopche
                     rb_hash_aset(loopcheck, testpath, ID2SYM(resolving));
                     link = rb_file_s_readlink(rb_cFile, testpath);
                     link_prefix = RSTRING_PTR(link);
-                    link_names = skiproot(link_prefix);
+                    link_names = skipprefixroot(link_prefix);
                     link_prefixlen = link_names - link_prefix;
                     if (link_prefixlen == 0) {
                         realpath_rec(prefixlenp, resolvedp, link_names, loopcheck, strict, *unresolved_firstsep == '\0');
@@ -3300,25 +3318,27 @@ rb_realpath_internal(VALUE basedir, VALUE path, int strict)
     }
 
     ptr = RSTRING_PTR(unresolved_path);
-    path_names = skiproot(ptr);
+    path_names = skipprefixroot(ptr);
     if (ptr != path_names) {
-        resolved = rb_str_new(ptr, path_names - ptr);
+        resolved = rb_enc_str_new(ptr, path_names - ptr,
+				  rb_enc_get(unresolved_path));
         goto root_found;
     }
 
     if (!NIL_P(basedir)) {
         ptr = RSTRING_PTR(basedir);
-        basedir_names = skiproot(ptr);
+	basedir_names = skipprefixroot(ptr);
         if (ptr != basedir_names) {
-            resolved = rb_str_new(ptr, basedir_names - ptr);
+            resolved = rb_enc_str_new(ptr, basedir_names - ptr,
+				      rb_enc_get(basedir));
             goto root_found;
         }
     }
 
     curdir = rb_dir_getwd();
     ptr = RSTRING_PTR(curdir);
-    curdir_names = skiproot(ptr);
-    resolved = rb_str_new(ptr, curdir_names - ptr);
+    curdir_names = skipprefixroot(ptr);
+    resolved = rb_enc_str_new(ptr, curdir_names - ptr, rb_enc_get(curdir));
 
   root_found:
     prefixptr = RSTRING_PTR(resolved);
@@ -3357,7 +3377,7 @@ rb_realpath_internal(VALUE basedir, VALUE path, int strict)
  *
  *  If _dir_string_ is given, it is used as a base directory
  *  for interpreting relative pathname instead of the current directory.
- * 
+ *
  *  All components of the pathname must exist when this method is
  *  called.
  */
@@ -3375,10 +3395,10 @@ rb_file_s_realpath(int argc, VALUE *argv, VALUE klass)
  *
  *  Returns the real (absolute) pathname of _pathname_ in the actual filesystem.
  *  The real pathname doesn't contain symlinks or useless dots.
- * 
+ *
  *  If _dir_string_ is given, it is used as a base directory
  *  for interpreting relative pathname instead of the current directory.
- * 
+ *
  *  The last component of the real pathname can be nonexistent.
  */
 static VALUE
@@ -3421,42 +3441,15 @@ rmext(const char *p, long l1, const char *e)
     return 0;
 }
 
-/*
- *  call-seq:
- *     File.basename(file_name [, suffix] )  ->  base_name
- *
- *  Returns the last component of the filename given in <i>file_name</i>,
- *  which must be formed using forward slashes (``<code>/</code>'')
- *  regardless of the separator used on the local file system. If
- *  <i>suffix</i> is given and present at the end of <i>file_name</i>,
- *  it is removed.
- *
- *     File.basename("/home/gumby/work/ruby.rb")          #=> "ruby.rb"
- *     File.basename("/home/gumby/work/ruby.rb", ".rb")   #=> "ruby"
- */
-
-static VALUE
-rb_file_s_basename(int argc, VALUE *argv)
+const char *
+ruby_find_basename(const char *name, long *len, long *ext)
 {
-    VALUE fname, fext, basename;
-    const char *name, *p;
+    const char *p;
 #if defined DOSISH_DRIVE_LETTER || defined DOSISH_UNC
     const char *root;
 #endif
-    long f, n;
+    long f, n = -1;
 
-    if (rb_scan_args(argc, argv, "11", &fname, &fext) == 2) {
-	rb_encoding *enc;
-	StringValue(fext);
-	if (!rb_enc_asciicompat(enc = rb_enc_get(fext))) {
-	    rb_raise(rb_eEncCompatError, "ascii incompatible character encodings: %s",
-		     rb_enc_name(enc));
-	}
-    }
-    FilePathStringValue(fname);
-    if (!NIL_P(fext)) rb_enc_check(fname, fext);
-    if (RSTRING_LEN(fname) == 0 || !*(name = RSTRING_PTR(fname)))
-	return rb_str_new_shared(fname);
     name = skipprefix(name);
 #if defined DOSISH_DRIVE_LETTER || defined DOSISH_UNC
     root = name;
@@ -3495,11 +3488,57 @@ rb_file_s_basename(int argc, VALUE *argv)
 #else
 	n = chompdirsep(p) - p;
 #endif
+    }
+
+    if (len)
+	*len = f;
+    if (ext)
+	*ext = n;
+    return p;
+}
+
+/*
+ *  call-seq:
+ *     File.basename(file_name [, suffix] )  ->  base_name
+ *
+ *  Returns the last component of the filename given in <i>file_name</i>,
+ *  which must be formed using forward slashes (``<code>/</code>'')
+ *  regardless of the separator used on the local file system. If
+ *  <i>suffix</i> is given and present at the end of <i>file_name</i>,
+ *  it is removed.
+ *
+ *     File.basename("/home/gumby/work/ruby.rb")          #=> "ruby.rb"
+ *     File.basename("/home/gumby/work/ruby.rb", ".rb")   #=> "ruby"
+ */
+
+static VALUE
+rb_file_s_basename(int argc, VALUE *argv)
+{
+    VALUE fname, fext, basename;
+    const char *name, *p;
+    long f, n;
+
+    if (rb_scan_args(argc, argv, "11", &fname, &fext) == 2) {
+	rb_encoding *enc;
+	StringValue(fext);
+	if (!rb_enc_asciicompat(enc = rb_enc_get(fext))) {
+	    rb_raise(rb_eEncCompatError, "ascii incompatible character encodings: %s",
+		     rb_enc_name(enc));
+	}
+    }
+    FilePathStringValue(fname);
+    if (!NIL_P(fext)) rb_enc_check(fname, fext);
+    if (RSTRING_LEN(fname) == 0 || !*(name = RSTRING_PTR(fname)))
+	return rb_str_new_shared(fname);
+
+    p = ruby_find_basename(name, &f, &n);
+    if (n >= 0) {
 	if (NIL_P(fext) || !(f = rmext(p, n, StringValueCStr(fext)))) {
 	    f = n;
 	}
 	if (f == RSTRING_LEN(fname)) return rb_str_new_shared(fname);
     }
+
     basename = rb_str_new(p, f);
     rb_enc_copy(basename, fname);
     OBJ_INFECT(basename, fname);
@@ -3565,27 +3604,22 @@ rb_file_dirname(VALUE fname)
 }
 
 /*
- *  call-seq:
- *     File.extname(path)  ->  string
- *
- *  Returns the extension (the portion of file name in <i>path</i>
- *  after the period).
- *
- *     File.extname("test.rb")         #=> ".rb"
- *     File.extname("a/b/d/test.rb")   #=> ".rb"
- *     File.extname("test")            #=> ""
- *     File.extname(".profile")        #=> ""
+ * accept a String, and return the pointer of the extension.
+ * if len is passed, set the length of extension to it.
+ * returned pointer is in ``name'' or NULL.
+ *                 returns   *len
+ *   no dot        NULL      0
+ *   dotfile       top       0
+ *   end with dot  dot       1
+ *   .ext          dot       len of .ext
+ *   .ext:stream   dot       len of .ext without :stream (NT only)
  *
  */
-
-static VALUE
-rb_file_s_extname(VALUE klass, VALUE fname)
+const char *
+ruby_find_extname(const char *name, long *len)
 {
-    const char *name, *p, *e;
-    VALUE extname;
+    const char *p, *e;
 
-    FilePathStringValue(fname);
-    name = StringValueCStr(fname);
     p = strrdirsep(name);	/* get the last path component */
     if (!p)
 	p = name;
@@ -3621,9 +3655,46 @@ rb_file_s_extname(VALUE klass, VALUE fname)
 	    break;
 	p = CharNext(p);
     }
-    if (!e || e == name || e+1 == p)	/* no dot, or the only dot is first or end? */
+
+    if (len) {
+	/* no dot, or the only dot is first or end? */
+	if (!e || e == name)
+	    *len = 0;
+	else if (e+1 == p)
+	    *len = 1;
+	else
+	    *len = p - e;
+    }
+    return e;
+}
+
+/*
+ *  call-seq:
+ *     File.extname(path)  ->  string
+ *
+ *  Returns the extension (the portion of file name in <i>path</i>
+ *  after the period).
+ *
+ *     File.extname("test.rb")         #=> ".rb"
+ *     File.extname("a/b/d/test.rb")   #=> ".rb"
+ *     File.extname("test")            #=> ""
+ *     File.extname(".profile")        #=> ""
+ *
+ */
+
+static VALUE
+rb_file_s_extname(VALUE klass, VALUE fname)
+{
+    const char *name, *e;
+    long len;
+    VALUE extname;
+
+    FilePathStringValue(fname);
+    name = StringValueCStr(fname);
+    e = ruby_find_extname(name, &len);
+    if (len <= 1)
 	return rb_str_new(0, 0);
-    extname = rb_str_new(e, p - e);	/* keep the dot, too! */
+    extname = rb_str_new(e, len);	/* keep the dot, too! */
     rb_enc_copy(extname, fname);
     OBJ_INFECT(extname, fname);
     return extname;
@@ -4109,7 +4180,7 @@ rb_f_test(int argc, VALUE *argv)
 	    return rb_file_writable_p(0, argv[1]);
 
 	  case 'W':
-	    return rb_file_world_writable_p(0, argv[1]);
+	    return rb_file_writable_real_p(0, argv[1]);
 
 	  case 'x':
 	    return rb_file_executable_p(0, argv[1]);

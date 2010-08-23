@@ -112,8 +112,10 @@ RUBY_EXTERN int isinf(double);
 # endif
 #endif
 
-#ifndef HAVE_ISNAN
+#ifndef isnan
+# ifndef HAVE_ISNAN
 RUBY_EXTERN int isnan(double);
+# endif
 #endif
 
 /*
@@ -161,6 +163,19 @@ RUBY_EXTERN size_t strlcat(char *, const char*, size_t);
 
 #ifndef HAVE_SIGNBIT
 RUBY_EXTERN int signbit(double x);
+#endif
+
+#ifndef HAVE_FFS
+RUBY_EXTERN int ffs(int);
+#endif
+
+#ifdef BROKEN_CLOSE
+#include <sys/types.h>
+#include <sys/socket.h>
+RUBY_EXTERN int ruby_getpeername(int, struct sockaddr *, socklen_t *);
+RUBY_EXTERN int ruby_getsockname(int, struct sockaddr *, socklen_t *);
+RUBY_EXTERN int ruby_shutdown(int, int);
+RUBY_EXTERN int ruby_close(int);
 #endif
 
 #if defined(__cplusplus)

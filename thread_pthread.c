@@ -163,7 +163,7 @@ ruby_thread_set_native(rb_thread_t *th)
     return pthread_setspecific(ruby_native_thread_key, th) == 0;
 }
 
-static void
+void
 Init_native_thread(void)
 {
     rb_thread_t *th = GET_THREAD();
@@ -199,6 +199,8 @@ native_thread_destroy(rb_thread_t *th)
 #define STACKADDR_AVAILABLE 1
 #elif defined HAVE_THR_STKSEGMENT || defined HAVE_PTHREAD_STACKSEG_NP
 #define STACKADDR_AVAILABLE 1
+#elif defined HAVE_PTHREAD_GETTHRDS_NP
+#define STACKADDR_AVAILABLE 1
 #endif
 
 #ifdef STACKADDR_AVAILABLE
@@ -232,9 +234,7 @@ get_stack(void **addr, size_t *size)
 # endif
     CHECK_ERR(pthread_attr_getguardsize(&attr, &guard));
     *size -= guard;
-# ifndef HAVE_PTHREAD_GETATTR_NP
     pthread_attr_destroy(&attr);
-# endif
 #elif defined HAVE_PTHREAD_GET_STACKADDR_NP && defined HAVE_PTHREAD_GET_STACKSIZE_NP
     pthread_t th = pthread_self();
     *addr = pthread_get_stackaddr_np(th);
@@ -248,6 +248,16 @@ get_stack(void **addr, size_t *size)
 # endif
     *addr = stk.ss_sp;
     *size = stk.ss_size;
+#elif defined HAVE_PTHREAD_GETTHRDS_NP
+    pthread_t th = pthread_self();
+    struct __pthrdsinfo thinfo;
+    char reg[256];
+    int regsiz=sizeof(reg);
+    CHECK_ERR(pthread_getthrds_np(&th, PTHRDSINFO_QUERY_ALL,
+				  &thinfo, sizeof(thinfo),
+				  &reg, &regsiz));
+    *addr = thinfo.__pi_stackaddr;
+    *size = thinfo.__pi_stacksize;
 #endif
     return 0;
 #undef CHECK_ERR
@@ -352,7 +362,9 @@ thread_start_func_1(void *th_ptr)
 	rb_thread_t *th = th_ptr;
 	VALUE stack_start;
 
+#ifndef __CYGWIN__
 	native_thread_init_stack(th);
+#endif
 	/* run */
 	thread_start_func_2(th, &stack_start, rb_ia64_bsp());
     }

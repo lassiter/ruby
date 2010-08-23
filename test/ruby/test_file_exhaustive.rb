@@ -393,13 +393,23 @@ class TestFileExhaustive < Test::Unit::TestCase
       assert_equal(@file, File.expand_path(@file + " "))
       assert_equal(@file, File.expand_path(@file + "."))
       assert_equal(@file, File.expand_path(@file + "::$DATA"))
+      assert_match(/\Ac:\//i, File.expand_path('c:'), '[ruby-core:31591]')
     end
     assert_kind_of(String, File.expand_path("~"))
-    unless /mingw|mswin/ =~ RUBY_PLATFORM
-      assert_raise(ArgumentError) { File.expand_path("~foo_bar_baz_unknown_user_wahaha") }
-      assert_raise(ArgumentError) { File.expand_path("~foo_bar_baz_unknown_user_wahaha", "/") }
+    assert_raise(ArgumentError) { File.expand_path("~foo_bar_baz_unknown_user_wahaha") }
+    assert_raise(ArgumentError) { File.expand_path("~foo_bar_baz_unknown_user_wahaha", "/") }
+    begin
+      bug3630 = '[ruby-core:31537]'
+      home = ENV["HOME"]
+      ENV["HOME"] = nil
+      assert_raise(ArgumentError) { File.expand_path("~") }
+      ENV["HOME"] = "~"
+      assert_raise(ArgumentError, bug3630) { File.expand_path("~") }
+      ENV["HOME"] = "."
+      assert_raise(ArgumentError, bug3630) { File.expand_path("~") }
+    ensure
+      ENV["HOME"] = home
     end
-
     assert_incompatible_encoding {|d| File.expand_path(d)}
   end
 
@@ -538,7 +548,7 @@ class TestFileExhaustive < Test::Unit::TestCase
       assert_equal(File.socket?(f), test(?S, f))
       assert_equal(File.setuid?(f), test(?u, f))
       assert_equal(File.writable?(f), test(?w, f))
-      assert_equal(File.world_writable?(f), test(?W, f))
+      assert_equal(File.writable_real?(f), test(?W, f))
       assert_equal(File.executable?(f), test(?x, f))
       assert_equal(File.executable_real?(f), test(?X, f))
       assert_equal(File.zero?(f), test(?z, f))

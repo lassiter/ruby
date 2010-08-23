@@ -31,7 +31,7 @@ static const char *
 rb_strerrno(int err)
 {
 #define defined_error(name, num) if (err == num) return name;
-#define undefined_error(name) 
+#define undefined_error(name)
 #include "known_errors.inc"
 #undef defined_error
 #undef undefined_error
@@ -245,6 +245,10 @@ rb_bug(const char *fmt, ...)
     va_start(args, fmt);
     report_bug(rb_sourcefile(), rb_sourceline(), fmt, args);
     va_end(args);
+
+#if defined(_WIN32) && defined(RT_VER) && RT_VER >= 80
+    _set_abort_behavior( 0, _CALL_REPORTFAULT);
+#endif
 
     abort();
 }
@@ -821,11 +825,16 @@ VALUE
 rb_name_err_mesg_new(VALUE obj, VALUE mesg, VALUE recv, VALUE method)
 {
     VALUE *ptr = ALLOC_N(VALUE, NAME_ERR_MESG_COUNT);
+    VALUE result;
 
     ptr[0] = mesg;
     ptr[1] = recv;
     ptr[2] = method;
-    return TypedData_Wrap_Struct(rb_cNameErrorMesg, &name_err_mesg_data_type, ptr);
+    result = TypedData_Wrap_Struct(rb_cNameErrorMesg, &name_err_mesg_data_type, ptr);
+    RB_GC_GUARD(mesg);
+    RB_GC_GUARD(recv);
+    RB_GC_GUARD(method);
+    return result;
 }
 
 /* :nodoc: */
@@ -1231,7 +1240,7 @@ syserr_eqq(VALUE self, VALUE exc)
  *  ScriptError is the superclass for errors raised when a script
  *  can not be executed because of a +LoadError+,
  *  +NotImplementedError+ or a +SyntaxError+. Note these type of
- *  +ScriptErrors+ are not +StandardExceptions+ and will not be
+ *  +ScriptErrors+ are not +StandardError+ and will not be
  *  rescued unless it is specified explicitly (or its ancestor
  *  +Exception+).
  */
@@ -1381,7 +1390,7 @@ syserr_eqq(VALUE self, VALUE exc)
  *  objects carry information about the exception---its type (the
  *  exception's class name), an optional descriptive string, and
  *  optional traceback information. Programs may subclass
- *  <code>Exception</code>, or more typically <code>StandardException</code>
+ *  <code>Exception</code>, or more typically <code>StandardError</code>
  *  to provide custom classes and add additional information.
  */
 

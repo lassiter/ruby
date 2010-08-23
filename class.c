@@ -146,6 +146,7 @@ rb_mod_init_copy(VALUE clone, VALUE orig)
     rb_obj_init_copy(clone, orig);
     if (!FL_TEST(CLASS_OF(clone), FL_SINGLETON)) {
 	RBASIC(clone)->klass = rb_singleton_class_clone(orig);
+	rb_singleton_class_attached(RBASIC(clone)->klass, (VALUE)clone);
     }
     RCLASS_SUPER(clone) = RCLASS_SUPER(orig);
     if (RCLASS_IV_TBL(orig)) {
@@ -243,7 +244,7 @@ rb_singleton_class_attached(VALUE klass, VALUE obj)
 
 
 
-#define METACLASS_OF(k) RBASIC(k)->klass    
+#define METACLASS_OF(k) RBASIC(k)->klass
 
 /*!
  * whether k is a meta^(n)-class of Class class
@@ -344,7 +345,7 @@ Init_class_hierarchy(void)
     rb_cModule = boot_defclass("Module", rb_cObject);
     rb_cClass =  boot_defclass("Class",  rb_cModule);
 
-    RBASIC(rb_cClass)->klass 
+    RBASIC(rb_cClass)->klass
 	= RBASIC(rb_cModule)->klass
 	= RBASIC(rb_cObject)->klass
 	= RBASIC(rb_cBasicObject)->klass
@@ -419,10 +420,10 @@ rb_class_inherited(VALUE super, VALUE klass)
 /*!
  * Defines a top-level class.
  * \param name   name of the class
- * \param super  a class from which the new class will derive. 
+ * \param super  a class from which the new class will derive.
  *               NULL means \c Object class.
  * \return the created class
- * \throw TypeError if the constant name \a name is already taken but 
+ * \throw TypeError if the constant name \a name is already taken but
  *                  the constant is not a \c Class.
  * \throw NameError if the class is already defined but the class can not
  *                  be reopened because its superclass is not \a super.
@@ -465,10 +466,10 @@ rb_define_class(const char *name, VALUE super)
  * Defines a class under the namespace of \a outer.
  * \param outer  a class which contains the new class.
  * \param name   name of the new class
- * \param super  a class from which the new class will derive. 
+ * \param super  a class from which the new class will derive.
  *               NULL means \c Object class.
  * \return the created class
- * \throw TypeError if the constant name \a name is already taken but 
+ * \throw TypeError if the constant name \a name is already taken but
  *                  the constant is not a \c Class.
  * \throw NameError if the class is already defined but the class can not
  *                  be reopened because its superclass is not \a super.
@@ -488,10 +489,10 @@ rb_define_class_under(VALUE outer, const char *name, VALUE super)
  * Defines a class under the namespace of \a outer.
  * \param outer  a class which contains the new class.
  * \param id     name of the new class
- * \param super  a class from which the new class will derive. 
+ * \param super  a class from which the new class will derive.
  *               NULL means \c Object class.
  * \return the created class
- * \throw TypeError if the constant name \a name is already taken but 
+ * \throw TypeError if the constant name \a name is already taken but
  *                  the constant is not a \c Class.
  * \throw NameError if the class is already defined but the class can not
  *                  be reopened because its superclass is not \a super.
@@ -833,7 +834,7 @@ method_entry(ID key, const rb_method_entry_t *me, st_table *list)
 }
 
 static VALUE
-class_instance_method_list(int argc, VALUE *argv, VALUE mod, int (*func) (ID, long, VALUE))
+class_instance_method_list(int argc, VALUE *argv, VALUE mod, int obj, int (*func) (ID, long, VALUE))
 {
     VALUE ary;
     int recur;
@@ -852,6 +853,7 @@ class_instance_method_list(int argc, VALUE *argv, VALUE mod, int (*func) (ID, lo
     for (; mod; mod = RCLASS_SUPER(mod)) {
 	st_foreach(RCLASS_M_TBL(mod), method_entry, (st_data_t)list);
 	if (BUILTIN_TYPE(mod) == T_ICLASS) continue;
+	if (obj && FL_TEST(mod, FL_SINGLETON)) continue;
 	if (!recur) break;
     }
     ary = rb_ary_new();
@@ -865,8 +867,8 @@ class_instance_method_list(int argc, VALUE *argv, VALUE mod, int (*func) (ID, lo
  *  call-seq:
  *     mod.instance_methods(include_super=true)   -> array
  *
- *  Returns an array containing the names of instance methods that is callable
- *  from outside in the receiver. For a module, these are the public methods;
+ *  Returns an array containing the names of the public and protected instance
+ *  methods in the receiver. For a module, these are the public and protected methods;
  *  for a class, they are the instance (not singleton) methods. With no
  *  argument, or with an argument that is <code>false</code>, the
  *  instance methods in <i>mod</i> are returned, otherwise the methods
@@ -891,7 +893,7 @@ class_instance_method_list(int argc, VALUE *argv, VALUE mod, int (*func) (ID, lo
 VALUE
 rb_class_instance_methods(int argc, VALUE *argv, VALUE mod)
 {
-    return class_instance_method_list(argc, argv, mod, ins_methods_i);
+    return class_instance_method_list(argc, argv, mod, 0, ins_methods_i);
 }
 
 /*
@@ -906,7 +908,7 @@ rb_class_instance_methods(int argc, VALUE *argv, VALUE mod)
 VALUE
 rb_class_protected_instance_methods(int argc, VALUE *argv, VALUE mod)
 {
-    return class_instance_method_list(argc, argv, mod, ins_methods_prot_i);
+    return class_instance_method_list(argc, argv, mod, 0, ins_methods_prot_i);
 }
 
 /*
@@ -929,7 +931,7 @@ rb_class_protected_instance_methods(int argc, VALUE *argv, VALUE mod)
 VALUE
 rb_class_private_instance_methods(int argc, VALUE *argv, VALUE mod)
 {
-    return class_instance_method_list(argc, argv, mod, ins_methods_priv_i);
+    return class_instance_method_list(argc, argv, mod, 0, ins_methods_priv_i);
 }
 
 /*
@@ -944,7 +946,93 @@ rb_class_private_instance_methods(int argc, VALUE *argv, VALUE mod)
 VALUE
 rb_class_public_instance_methods(int argc, VALUE *argv, VALUE mod)
 {
-    return class_instance_method_list(argc, argv, mod, ins_methods_pub_i);
+    return class_instance_method_list(argc, argv, mod, 0, ins_methods_pub_i);
+}
+
+/*
+ *  call-seq:
+ *     obj.methods    -> array
+ *
+ *  Returns a list of the names of methods publicly accessible in
+ *  <i>obj</i>. This will include all the methods accessible in
+ *  <i>obj</i>'s ancestors.
+ *
+ *     class Klass
+ *       def kMethod()
+ *       end
+ *     end
+ *     k = Klass.new
+ *     k.methods[0..9]    #=> [:kMethod, :freeze, :nil?, :is_a?,
+ *                        #    :class, :instance_variable_set,
+ *                        #    :methods, :extend, :__send__, :instance_eval]
+ *     k.methods.length   #=> 42
+ */
+
+VALUE
+rb_obj_methods(int argc, VALUE *argv, VALUE obj)
+{
+  retry:
+    if (argc == 0) {
+	VALUE args[1];
+
+	args[0] = Qtrue;
+	return class_instance_method_list(argc, argv, CLASS_OF(obj), 1, ins_methods_i);
+    }
+    else {
+	VALUE recur;
+
+	rb_scan_args(argc, argv, "1", &recur);
+	if (RTEST(recur)) {
+	    argc = 0;
+	    goto retry;
+	}
+	return rb_obj_singleton_methods(argc, argv, obj);
+    }
+}
+
+/*
+ *  call-seq:
+ *     obj.protected_methods(all=true)   -> array
+ *
+ *  Returns the list of protected methods accessible to <i>obj</i>. If
+ *  the <i>all</i> parameter is set to <code>false</code>, only those methods
+ *  in the receiver will be listed.
+ */
+
+VALUE
+rb_obj_protected_methods(int argc, VALUE *argv, VALUE obj)
+{
+    return class_instance_method_list(argc, argv, CLASS_OF(obj), 1, ins_methods_prot_i);
+}
+
+/*
+ *  call-seq:
+ *     obj.private_methods(all=true)   -> array
+ *
+ *  Returns the list of private methods accessible to <i>obj</i>. If
+ *  the <i>all</i> parameter is set to <code>false</code>, only those methods
+ *  in the receiver will be listed.
+ */
+
+VALUE
+rb_obj_private_methods(int argc, VALUE *argv, VALUE obj)
+{
+    return class_instance_method_list(argc, argv, CLASS_OF(obj), 1, ins_methods_priv_i);
+}
+
+/*
+ *  call-seq:
+ *     obj.public_methods(all=true)   -> array
+ *
+ *  Returns the list of public methods accessible to <i>obj</i>. If
+ *  the <i>all</i> parameter is set to <code>false</code>, only those methods
+ *  in the receiver will be listed.
+ */
+
+VALUE
+rb_obj_public_methods(int argc, VALUE *argv, VALUE obj)
+{
+    return class_instance_method_list(argc, argv, CLASS_OF(obj), 1, ins_methods_pub_i);
 }
 
 /*
@@ -954,6 +1042,7 @@ rb_class_public_instance_methods(int argc, VALUE *argv, VALUE mod)
  *  Returns an array of the names of singleton methods for <i>obj</i>.
  *  If the optional <i>all</i> parameter is true, the list will include
  *  methods in modules included in <i>obj</i>.
+ *  Only public and protected singleton methods are returned.
  *
  *     module Other
  *       def three() end
@@ -1019,12 +1108,12 @@ rb_obj_singleton_methods(int argc, VALUE *argv, VALUE obj)
  * These API takes a C function as a method body.
  *
  * \par Method body functions
- * Method body functions must return a VALUE and 
+ * Method body functions must return a VALUE and
  * can be one of the following form:
  * <dl>
  * <dt>Fixed number of parameters</dt>
  * <dd>
- *     This form is a normal C function, excepting it takes 
+ *     This form is a normal C function, excepting it takes
  *     a receiver object as the first argument.
  *
  *     \code
@@ -1044,7 +1133,7 @@ rb_obj_singleton_methods(int argc, VALUE *argv, VALUE obj)
  * <dt>Ruby array style</dt>
  * <dd>
  *     This form takes two parameters: self and args.
- *     \a self is the receiver. \a args is an Array object which 
+ *     \a self is the receiver. \a args is an Array object which
  *     contains the arguments.
  *
  *     \code
@@ -1118,7 +1207,7 @@ rb_undef_method(VALUE klass, const char *name)
  *
  * \note DO NOT expose the returned singleton class to
  *       outside of class.c.
- *       Use \ref rb_singleton_class instead for 
+ *       Use \ref rb_singleton_class instead for
  *       consistency of the metaclass hierarchy.
  */
 static VALUE
@@ -1170,11 +1259,11 @@ singleton_class_of(VALUE obj)
  * \return the singleton class.
  *
  * \post \a obj has its own singleton class.
- * \post if \a obj is a class, 
- *       the returned singleton class also has its own 
+ * \post if \a obj is a class,
+ *       the returned singleton class also has its own
  *       singleton class in order to keep consistency of the
  *       inheritance structure of metaclasses.
- * \note a new singleton class will be created 
+ * \note a new singleton class will be created
  *       if \a obj does not have it.
  * \note the singleton classes for nil, true and false are:
  *       NilClass, TrueClass and FalseClass.
@@ -1185,7 +1274,7 @@ rb_singleton_class(VALUE obj)
     VALUE klass = singleton_class_of(obj);
 
     /* ensures an exposed class belongs to its own eigenclass */
-    if (TYPE(obj) == T_CLASS) ENSURE_EIGENCLASS(klass); 
+    if (TYPE(obj) == T_CLASS) ENSURE_EIGENCLASS(klass);
 
     return klass;
 }

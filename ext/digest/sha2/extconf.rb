@@ -4,7 +4,6 @@
 require "mkmf"
 
 $defs << "-DHAVE_CONFIG_H"
-$INCFLAGS << " -I$(srcdir)/.."
 
 $objs = [ "sha2init.#{$OBJEXT}" ]
 
@@ -25,6 +24,4 @@ have_header("sys/cdefs.h")
 
 $preload = %w[digest]
 
-if have_type("uint64_t", "defs.h", $defs.join(' '))
-  create_makefile("digest/sha2")
-end
+create_makefile("digest/sha2")

@@ -66,6 +66,7 @@ vm_call0(rb_thread_t* th, VALUE recv, VALUE id, int argc, const VALUE *argv,
 	val = vm_exec(th);
 	break;
       }
+      case VM_METHOD_TYPE_NOTIMPLEMENTED:
       case VM_METHOD_TYPE_CFUNC: {
 	EXEC_EVENT_HOOK(th, RUBY_EVENT_C_CALL, recv, id, klass);
 	{
@@ -214,7 +215,7 @@ static inline int rb_method_call_status(rb_thread_t *th, rb_method_entry_t *me, 
  * \param mid    an ID that represents the name of the method
  * \param argc   the number of method arguments
  * \param argv   a pointer to an array of method arguments
- * \param scope  
+ * \param scope
  * \param self   self in the caller. Qundef means the current control frame's self.
  *
  * \note \a self is used in order to controlling access to protected methods.
@@ -429,7 +430,7 @@ rb_method_call_status(rb_thread_t *th, rb_method_entry_t *me, call_type scope, V
  * \param mid    an ID that represents the name of the method
  * \param argc   the number of method arguments
  * \param argv   a pointer to an array of method arguments
- * \param scope  
+ * \param scope
  */
 static inline VALUE
 rb_call(VALUE recv, ID mid, int argc, const VALUE *argv, call_type scope)
@@ -1536,7 +1537,7 @@ rb_catch_obj(VALUE tag, VALUE (*func)(), VALUE data)
 
 /*
  *  call-seq:
- *     caller(start=1)    -> Array or nil
+ *     caller(start=1)    -> array or nil
  *
  *  Returns the current execution stack---an array containing strings in
  *  the form ``<em>file:line</em>'' or ``<em>file:line: in
@@ -1544,7 +1545,7 @@ rb_catch_obj(VALUE tag, VALUE (*func)(), VALUE data)
  *  determines the number of initial stack entries to omit from the
  *  result.
  *
- *  Returns +nil+ if _start_ is greater than or equal to the size of
+ *  Returns +nil+ if _start_ is greater than the size of
  *  current execution stack.
  *
  *     def a(skip)
@@ -1556,11 +1557,12 @@ rb_catch_obj(VALUE tag, VALUE (*func)(), VALUE data)
  *     def c(skip)
  *       b(skip)
  *     end
- *     c(0)   #=> ["prog:2:in `a'", "prog:5:in `b'", "prog:8:in `c'", "prog:10"]
- *     c(1)   #=> ["prog:5:in `b'", "prog:8:in `c'", "prog:11"]
- *     c(2)   #=> ["prog:8:in `c'", "prog:12"]
- *     c(3)   #=> ["prog:13"]
- *     c(4)   #=> nil
+ *     c(0)   #=> ["prog:2:in `a'", "prog:5:in `b'", "prog:8:in `c'", "prog:10:in `<main>'"]
+ *     c(1)   #=> ["prog:5:in `b'", "prog:8:in `c'", "prog:11:in `<main>'"]
+ *     c(2)   #=> ["prog:8:in `c'", "prog:12:in `<main>'"]
+ *     c(3)   #=> ["prog:13:in `<main>'"]
+ *     c(4)   #=> []
+ *     c(5)   #=> nil
  */
 
 static VALUE

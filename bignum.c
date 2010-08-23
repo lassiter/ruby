@@ -1453,8 +1453,9 @@ big_op(VALUE x, VALUE y, int op)
 	    double a = RFLOAT_VALUE(y);
 
 	    if (isinf(a)) {
-		if (a > 0.0) return INT2FIX(-1);
-		else return INT2FIX(1);
+		if (a > 0.0) rel = INT2FIX(-1);
+		else rel = INT2FIX(1);
+		break;
 	    }
 	    rel = rb_dbl_cmp(rb_big2dbl(x), a);
 	    break;
@@ -2670,7 +2671,7 @@ big_shift(VALUE x, long n)
     return x;
 }
 
-static VALUE 
+static VALUE
 big_fdiv(VALUE x, VALUE y)
 {
 #define DBL_BIGDIG ((DBL_MANT_DIG + BITSPERDIG) / BITSPERDIG)
