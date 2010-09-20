@@ -33,11 +33,6 @@ RUBY_PLATFORM = Config::MAKEFILE_CONFIG['RUBY_PLATFORM']
 Config::CONFIG.merge!(Config::MAKEFILE_CONFIG)
 Config::MAKEFILE_CONFIG.merge!(Config::CONFIG)
 
-# For environment overrides to work, the MAKEFILE_CONFIG hash needs to have these
-Config::MAKEFILE_CONFIG["CFLAGS"] += " $(cflags)"
-Config::MAKEFILE_CONFIG["CPPFLAGS"] += " $(DEFS) $(cppflags)"
-Config::MAKEFILE_CONFIG["CXXFLAGS"] += " $(cflags) $(cxxflags)"
-
 $topdir     = Config::MAKEFILE_CONFIG['includedir']
 $hdrdir     = File.join($topdir, "ruby")
 $top_srcdir = $topdir
