@@ -33,6 +33,11 @@ RUBY_PLATFORM = Config::MAKEFILE_CONFIG['RUBY_PLATFORM']
 Config::CONFIG.merge!(Config::MAKEFILE_CONFIG)
 Config::MAKEFILE_CONFIG.merge!(Config::CONFIG)
 
+# For environment overrides to work, the MAKEFILE_CONFIG hash needs to have these
+Config::MAKEFILE_CONFIG["CFLAGS"] += " $(cflags)"
+Config::MAKEFILE_CONFIG["CPPFLAGS"] += " $(DEFS) $(cppflags)"
+Config::MAKEFILE_CONFIG["CXXFLAGS"] += " $(cflags) $(cxxflags)"
+
 $topdir     = Config::MAKEFILE_CONFIG['includedir']
 $hdrdir     = File.join($topdir, "ruby")
 $top_srcdir = $topdir
@@ -331,7 +336,9 @@ end
 
 def create_tmpsrc(src)
   src = yield(src) if block_given?
-  src = src.gsub(/[ \t]+$/, '').gsub(/\A\n+|^\n+$/, '').sub(/[^\n]\z/, "\\&\n")
+  src.gsub!(/[ \t]+$/, '')
+  src.gsub!(/\A\n+|^\n+$/, '')
+  src.sub!(/[^\n]\z/, "\\&\n")
   open(CONFTEST_C, "wb") do |cfile|
     cfile.print src
   end
@@ -1345,7 +1352,7 @@ VPATH = #{vpath.join(CONFIG['PATH_SEPARATOR'])}
   else
     sep = ""
   end
-  extconf_h = $extconf_h ? "-DRUBY_EXTCONF_H=\\\"$(RUBY_EXTCONF_H)\\\" " : $defs.join(" ")<<" "
+  extconf_h = $extconf_h ? "-DRUBY_EXTCONF_H=\\\"$(RUBY_EXTCONF_H)\\\" " : $defs.join(" ") << " "
   mk << %{
 CC = #{CONFIG['CC']}
 LIBRUBY = #{CONFIG['LIBRUBY']}
@@ -1552,8 +1559,8 @@ TARGET_SO     = #{($extout ? '$(RUBYARCHDIR)/' : '')}$(DLLIB)
 CLEANLIBS     = #{n}#{CONFIG['DLEXT']} #{n}il? #{n}tds #{n}map
 CLEANOBJS     = *.#{$OBJEXT} *.#{$LIBEXT} *.s[ol] *.pdb *.exp *.bak
 
-all:		#{$extout ? "install" : target ? "$(DLLIB)" : "Makefile"}
-static:		$(STATIC_LIB)#{$extout ? " install-rb" : ""}
+all:    #{$extout ? "install" : target ? "$(DLLIB)" : "Makefile"}
+static: $(STATIC_LIB)#{$extout ? " install-rb" : ""}
 .PHONY: all install static install-so install-rb
 .PHONY: clean clean-so clean-rb
 "
