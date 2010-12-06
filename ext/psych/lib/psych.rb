@@ -92,7 +92,7 @@ module Psych
   VERSION         = '1.0.0'
 
   # The version of libyaml Psych is using
-  LIBYAML_VERSION = Psych.libyaml_version.join '.'
+  # LIBYAML_VERSION = Psych.libyaml_version.join '.'
 
   ###
   # Load +yaml+ in to a Ruby data structure.  If multiple documents are
