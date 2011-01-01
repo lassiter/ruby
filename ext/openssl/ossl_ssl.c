@@ -1018,7 +1018,7 @@ ossl_ssl_setup(VALUE self)
 }
 
 #ifdef _WIN32
-#define ssl_get_error(ssl, ret) (errno = WSAGetLastError(), SSL_get_error(ssl, ret))
+#define ssl_get_error(ssl, ret) (errno = rb_w32_map_errno(WSAGetLastError()), SSL_get_error(ssl, ret))
 #else
 #define ssl_get_error(ssl, ret) SSL_get_error(ssl, ret)
 #endif
@@ -1337,7 +1337,7 @@ ossl_ssl_get_cert(VALUE self)
     X509 *cert = NULL;
 
     Data_Get_Struct(self, SSL, ssl);
-    if (ssl) {
+    if (!ssl) {
         rb_warning("SSL session is not started yet.");
         return Qnil;
     }

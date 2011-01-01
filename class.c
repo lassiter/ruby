@@ -293,7 +293,7 @@ make_metaclass(VALUE klass)
     }
 
     super = RCLASS_SUPER(klass);
-    while (FL_TEST(super, T_ICLASS)) super = RCLASS_SUPER(super);
+    while (RB_TYPE_P(super, T_ICLASS)) super = RCLASS_SUPER(super);
     RCLASS_SUPER(metaclass) = super ? ENSURE_EIGENCLASS(super) : rb_cClass;
 
     OBJ_INFECT(metaclass, RCLASS_SUPER(metaclass));
@@ -524,6 +524,7 @@ rb_define_class_id_under(VALUE outer, ID id, VALUE super)
     rb_set_class_path_string(klass, outer, rb_id2str(id));
     rb_const_set(outer, id, klass);
     rb_class_inherited(super, klass);
+    rb_gc_register_mark_object(klass);
 
     return klass;
 }
@@ -590,6 +591,7 @@ rb_define_module_id_under(VALUE outer, ID id)
     module = rb_define_module_id(id);
     rb_const_set(outer, id, module);
     rb_set_class_path_string(module, outer, rb_id2str(id));
+    rb_gc_register_mark_object(module);
 
     return module;
 }

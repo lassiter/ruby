@@ -619,10 +619,11 @@ rb_funcall(VALUE recv, ID mid, int n, ...)
 {
     VALUE *argv;
     va_list ar;
-    va_init_list(ar, n);
 
     if (n > 0) {
 	long i;
+
+	va_init_list(ar, n);
 
 	argv = ALLOCA_N(VALUE, n);
 
@@ -662,6 +663,14 @@ rb_funcall2(VALUE recv, ID mid, int argc, const VALUE *argv)
 VALUE
 rb_funcall3(VALUE recv, ID mid, int argc, const VALUE *argv)
 {
+    return rb_call(recv, mid, argc, argv, CALL_PUBLIC);
+}
+
+VALUE
+rb_funcall_passing_block(VALUE recv, ID mid, int argc, const VALUE *argv)
+{
+    PASS_PASSED_BLOCK_TH(GET_THREAD());
+
     return rb_call(recv, mid, argc, argv, CALL_PUBLIC);
 }
 

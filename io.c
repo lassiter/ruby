@@ -137,7 +137,7 @@ VALUE rb_default_rs;
 
 static VALUE argf;
 
-static ID id_write, id_read, id_getc, id_flush, id_readpartial;
+static ID id_write, id_read, id_getc, id_flush, id_readpartial, id_set_encoding;
 static VALUE sym_mode, sym_perm, sym_extenc, sym_intenc, sym_encoding, sym_open_args;
 static VALUE sym_textmode, sym_binmode, sym_autoclose;
 
@@ -1211,6 +1211,9 @@ io_fillbuf(rb_io_t *fptr)
         fptr->rbuf_len = 0;
         fptr->rbuf_capa = IO_RBUF_CAPA_FOR(fptr);
         fptr->rbuf = ALLOC_N(char, fptr->rbuf_capa);
+#ifdef _WIN32
+	fptr->rbuf_capa--;
+#endif
     }
     if (fptr->rbuf_len == 0) {
       retry:
@@ -1734,6 +1737,32 @@ io_shift_cbuf(rb_io_t *fptr, int len, VALUE *strp)
     return str;
 }
 
+static void
+io_setstrbuf(VALUE *str,long len)
+{
+#ifdef _WIN32
+    if (NIL_P(*str)) {
+	*str = rb_str_new(0, len+1);
+	rb_str_set_len(*str,len);
+    }
+    else {
+	StringValue(*str);
+	rb_str_modify(*str);
+	rb_str_resize(*str, len+1);
+	rb_str_set_len(*str,len);
+    }
+#else
+    if (NIL_P(*str)) {
+	*str = rb_str_new(0, len);
+    }
+    else {
+	StringValue(*str);
+	rb_str_modify(*str);
+	rb_str_resize(*str, len);
+    }
+#endif
+}
+
 static VALUE
 read_all(rb_io_t *fptr, long siz, VALUE str)
 {
@@ -1744,8 +1773,7 @@ read_all(rb_io_t *fptr, long siz, VALUE str)
     int cr;
 
     if (NEED_READCONV(fptr)) {
-        if (NIL_P(str)) str = rb_str_new(NULL, 0);
-        else rb_str_set_len(str, 0);
+	io_setstrbuf(&str,0);
         make_readconv(fptr, 0);
         while (1) {
             VALUE v;
@@ -1773,12 +1801,7 @@ read_all(rb_io_t *fptr, long siz, VALUE str)
     cr = 0;
 
     if (siz == 0) siz = BUFSIZ;
-    if (NIL_P(str)) {
-	str = rb_str_new(0, siz);
-    }
-    else {
-	rb_str_resize(str, siz);
-    }
+    io_setstrbuf(&str,siz);
     for (;;) {
 	READ_CHECK(fptr);
 	n = io_fread(str, bytes, fptr);
@@ -1831,14 +1854,7 @@ io_getpartial(int argc, VALUE *argv, VALUE io, int nonblock)
 	rb_raise(rb_eArgError, "negative length %ld given", len);
     }
 
-    if (NIL_P(str)) {
-	str = rb_str_new(0, len);
-    }
-    else {
-	StringValue(str);
-	rb_str_modify(str);
-        rb_str_resize(str, len);
-    }
+    io_setstrbuf(&str,len);
     OBJ_TAINT(str);
 
     GetOpenFile(io, fptr);
@@ -2157,7 +2173,6 @@ io_read(int argc, VALUE *argv, VALUE io)
     rb_scan_args(argc, argv, "02", &length, &str);
 
     if (NIL_P(length)) {
-	if (!NIL_P(str)) StringValue(str);
 	GetOpenFile(io, fptr);
 	rb_io_check_char_readable(fptr);
 	return read_all(fptr, remain_size(fptr), str);
@@ -2167,14 +2182,7 @@ io_read(int argc, VALUE *argv, VALUE io)
 	rb_raise(rb_eArgError, "negative length %ld given", len);
     }
 
-    if (NIL_P(str)) {
-	str = rb_str_new(0, len);
-    }
-    else {
-	StringValue(str);
-	rb_str_modify(str);
-	rb_str_resize(str,len);
-    }
+    io_setstrbuf(&str,len);
 
     GetOpenFile(io, fptr);
     rb_io_check_byte_readable(fptr);
@@ -3193,11 +3201,10 @@ rb_io_ungetc(VALUE io, VALUE c)
     rb_io_check_char_readable(fptr);
     if (NIL_P(c)) return Qnil;
     if (FIXNUM_P(c)) {
-	int cc = FIX2INT(c);
-	rb_encoding *enc = io_read_encoding(fptr);
-	char buf[16];
-
-	c = rb_str_new(buf, rb_enc_mbcput(cc, buf, enc));
+	c = rb_enc_uint_chr(FIX2UINT(c), io_read_encoding(fptr));
+    }
+    else if (TYPE(c) == T_BIGNUM) {
+	c = rb_enc_uint_chr(NUM2UINT(c), io_read_encoding(fptr));
     }
     else {
 	SafeStringValue(c);
@@ -3423,7 +3430,7 @@ fptr_finalize(rb_io_t *fptr, int noraise)
 {
     VALUE err = Qnil;
     if (fptr->writeconv) {
-	if (fptr->write_lock) {
+	if (fptr->write_lock && !noraise) {
             struct finish_writeconv_arg arg;
             arg.fptr = fptr;
             arg.noalloc = noraise;
@@ -3434,8 +3441,14 @@ fptr_finalize(rb_io_t *fptr, int noraise)
 	}
     }
     if (fptr->wbuf_len) {
-        if (io_fflush(fptr) < 0 && NIL_P(err))
-            err = noraise ? Qtrue : INT2NUM(errno);
+	if (noraise) {
+	    if ((int)io_flush_buffer_sync(fptr) < 0 && NIL_P(err))
+		err = Qtrue;
+	}
+	else {
+	    if (io_fflush(fptr) < 0 && NIL_P(err))
+		err = INT2NUM(errno);
+	}
     }
     if (IS_PREP_STDIO(fptr) || fptr->fd <= 2) {
         goto skip_fd_close;
@@ -3874,14 +3887,7 @@ rb_io_sysread(int argc, VALUE *argv, VALUE io)
     rb_scan_args(argc, argv, "11", &len, &str);
     ilen = NUM2LONG(len);
 
-    if (NIL_P(str)) {
-	str = rb_str_new(0, ilen);
-    }
-    else {
-	StringValue(str);
-	rb_str_modify(str);
-	rb_str_resize(str, ilen);
-    }
+    io_setstrbuf(&str,ilen);
     if (ilen == 0) return str;
 
     GetOpenFile(io, fptr);
@@ -4788,7 +4794,7 @@ static void
 pipe_finalize(rb_io_t *fptr, int noraise)
 {
 #if !defined(HAVE_FORK) && !defined(_WIN32)
-    int status;
+    int status = 0;
     if (fptr->stdio_file) {
 	status = pclose(fptr->stdio_file);
     }
@@ -6055,6 +6061,22 @@ rb_f_putc(VALUE recv, VALUE ch)
     return rb_funcall2(rb_stdout, rb_intern("putc"), 1, &ch);
 }
 
+
+static int
+str_end_with_asciichar(VALUE str, int c)
+{
+    long len = RSTRING_LEN(str);
+    const char *ptr = RSTRING_PTR(str);
+    rb_encoding *enc = rb_enc_from_index(ENCODING_GET(str));
+    int n;
+
+    if (len == 0) return 0;
+    if ((n = rb_enc_mbminlen(enc)) == 1) {
+	return ptr[len - 1] == c;
+    }
+    return rb_enc_ascget(ptr + ((len - 1) / n) * n, ptr + len, &n, enc) == c;
+}
+
 static VALUE
 io_puts_ary(VALUE ary, VALUE out, int recur)
 {
@@ -6118,7 +6140,7 @@ rb_io_puts(int argc, VALUE *argv, VALUE out)
       string:
 	rb_io_write(out, line);
 	if (RSTRING_LEN(line) == 0 ||
-            RSTRING_PTR(line)[RSTRING_LEN(line)-1] != '\n') {
+            !str_end_with_asciichar(line, '\n')) {
 	    rb_io_write(out, rb_default_rs);
 	}
     }
@@ -8639,6 +8661,10 @@ rb_io_set_encoding(int argc, VALUE *argv, VALUE io)
     rb_io_t *fptr;
     VALUE v1, v2, opt;
 
+    if (TYPE(io) != T_FILE) {
+        return rb_funcall2(io, id_set_encoding, argc, argv);
+    }
+
     opt = pop_last_hash(&argc, argv);
     rb_scan_args(argc, argv, "11", &v1, &v2);
     GetOpenFile(io, fptr);
@@ -9816,6 +9842,7 @@ Init_IO(void)
     id_getc = rb_intern("getc");
     id_flush = rb_intern("flush");
     id_readpartial = rb_intern("readpartial");
+    id_set_encoding = rb_intern("set_encoding");
 
     rb_define_global_function("syscall", rb_f_syscall, -1);
 
