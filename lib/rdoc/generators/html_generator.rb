@@ -1071,16 +1071,16 @@ module Generators
         #    p t.class
 #        style = STYLE_MAP[t.class]
         style = case t
-                when RubyToken::TkCONSTANT then "ruby-constant"
-                when RubyToken::TkKW       then "ruby-keyword kw"
-                when RubyToken::TkIVAR     then "ruby-ivar"
-                when RubyToken::TkOp       then "ruby-operator"
-                when RubyToken::TkId       then "ruby-identifier"
-                when RubyToken::TkNode     then "ruby-node"
-                when RubyToken::TkCOMMENT  then "ruby-comment cmt"
-                when RubyToken::TkREGEXP   then "ruby-regexp re"
-                when RubyToken::TkSTRING   then "ruby-value str"
-                when RubyToken::TkVal      then "ruby-value"
+                when RDoc::RubyToken::TkCONSTANT then "ruby-constant"
+                when RDoc::RubyToken::TkKW       then "ruby-keyword kw"
+                when RDoc::RubyToken::TkIVAR     then "ruby-ivar"
+                when RDoc::RubyToken::TkOp       then "ruby-operator"
+                when RDoc::RubyToken::TkId       then "ruby-identifier"
+                when RDoc::RubyToken::TkNode     then "ruby-node"
+                when RDoc::RubyToken::TkCOMMENT  then "ruby-comment cmt"
+                when RDoc::RubyToken::TkREGEXP   then "ruby-regexp re"
+                when RDoc::RubyToken::TkSTRING   then "ruby-value str"
+                when RDoc::RubyToken::TkVal      then "ruby-value"
                 else
                     nil
                 end
