@@ -41,6 +41,7 @@ require 'rdoc/template'
 require 'rdoc/markup/simple_markup'
 require 'rdoc/markup/simple_markup/to_html'
 require 'cgi'
+require 'rbconfig'
 
 module Generators
 
@@ -782,20 +783,29 @@ module Generators
         @path = http_url(file_dir)
       end
 
-      @name = @context.file_relative_name
+      @name = file_relative_name
 
       collect_methods
       AllReferences.add(name, self)
       context.viewer = self
     end
 
+    def file_relative_name
+      name = @context.file_relative_name
+      # Strip drive letter off on windows since ':' is illegal char for 
+      # filenames on windows.
+      if RbConfig::CONFIG['host_os'] =~ /mingw|mswin/
+	name = name.sub(/^[a-zA-Z]:/, '') 
+      end
+      name
+    end
+
     def http_url(file_dir)
-      File.join(file_dir, @context.file_relative_name.tr('.', '_')) +
-        ".html"
+      File.join(file_dir, file_relative_name.tr('.', '_')) + ".html"
     end
 
     def filename_to_label
-      @context.file_relative_name.gsub(/%|\/|\?|\#/) {|s| '%' + ("%x" % s[0]) }
+      file_relative_name.gsub(/%|\/|\?|\#/) {|s| '%' + ("%x" % s[0]) }
     end
 
     def index_name
