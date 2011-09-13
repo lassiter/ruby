@@ -190,10 +190,6 @@ module Psych
           o.children.each_slice(2) { |k,v|
             key = accept(k)
 
-<<<<<<< HEAD
-            if key == '<<' && Nodes::Alias === v
-              hash.merge! accept(v)
-=======
             if key == '<<'
               case v
               when Nodes::Alias
@@ -205,7 +201,6 @@ module Psych
               else
                 hash[key] = accept(v)
               end
->>>>>>> ruby/ruby_1_9_2
             else
               hash[key] = accept(v)
             end
