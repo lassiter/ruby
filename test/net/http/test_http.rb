@@ -45,6 +45,10 @@ module TestNetHTTP_version_1_1_methods
     assert_equal $test_net_http_data, body
     assert_equal $test_net_http_data.size, res.body.size
     assert_equal $test_net_http_data, res.body
+
+    assert_nothing_raised {
+      res, body = http.get('/', { 'User-Agent' => 'test' }.freeze)
+    }
   end
 
   def _test_get__iter(http)
@@ -169,6 +173,25 @@ module TestNetHTTP_version_1_1_methods
     assert_equal ["a=x1", "a=x2", "b=y"], res.body.split(/[;&]/).sort
   end
 
+  def test_timeout_during_HTTP_session
+    bug4246 = "expected the HTTP session to have timed out but have not. c.f. [ruby-core:34203]"
+
+    # listen for connections... but deliberately do not complete SSL handshake
+    TCPServer.open(0) {|server|
+      port = server.addr[1]
+
+      conn = Net::HTTP.new('localhost', port)
+      conn.read_timeout = 1
+      conn.open_timeout = 1
+
+      th = Thread.new do
+        assert_raise(Timeout::Error) {
+          conn.get('/')
+        }
+      end
+      assert th.join(10), bug4246
+    }
+  end
 end
 
 

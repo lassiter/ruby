@@ -2106,7 +2106,7 @@ gzfile_check_footer(struct gzfile *gz)
     if (gz->crc != crc) {
 	rb_raise(cCRCError, "invalid compressed data -- crc error");
     }
-    if (gz->z.stream.total_out != length) {
+    if ((uint32_t)gz->z.stream.total_out != length) {
 	rb_raise(cLengthError, "invalid compressed data -- length error");
     }
 }
@@ -2388,6 +2388,8 @@ gzfile_reader_rewind(struct gzfile *gz)
     gzfile_reset(gz);
 }
 
+extern VALUE rb_str_resurrect(VALUE str);
+
 static VALUE
 gzfile_reader_get_unused(struct gzfile *gz)
 {
@@ -2400,7 +2402,7 @@ gzfile_reader_get_unused(struct gzfile *gz)
     }
     if (NIL_P(gz->z.input)) return Qnil;
 
-    str = rb_str_dup(gz->z.input);
+    str = rb_str_resurrect(gz->z.input);
     OBJ_TAINT(str);  /* for safe */
     return str;
 }

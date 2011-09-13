@@ -114,7 +114,27 @@ EOT
     }
   end
 
-  def test_open_r_enc_in_opt2
+  def test_open_r_encname_in_opt
+    with_tmpdir {
+      generate_file('tmp', "")
+      open("tmp", "r", encoding: Encoding::EUC_JP) {|f|
+        assert_equal(Encoding::EUC_JP, f.external_encoding)
+        assert_equal(nil, f.internal_encoding)
+      }
+    }
+  end
+
+  def test_open_r_ext_enc_in_opt
+    with_tmpdir {
+      generate_file('tmp', "")
+      open("tmp", "r", external_encoding: Encoding::EUC_JP) {|f|
+        assert_equal(Encoding::EUC_JP, f.external_encoding)
+        assert_equal(nil, f.internal_encoding)
+      }
+    }
+  end
+
+  def test_open_r_ext_encname_in_opt
     with_tmpdir {
       generate_file('tmp', "")
       open("tmp", "r", external_encoding: "euc-jp") {|f|
@@ -127,6 +147,16 @@ EOT
   def test_open_r_enc_enc
     with_tmpdir {
       generate_file('tmp', "")
+      open("tmp", "r", external_encoding: Encoding::EUC_JP, internal_encoding: Encoding::UTF_8) {|f|
+        assert_equal(Encoding::EUC_JP, f.external_encoding)
+        assert_equal(Encoding::UTF_8, f.internal_encoding)
+      }
+    }
+  end
+
+  def test_open_r_encname_encname
+    with_tmpdir {
+      generate_file('tmp', "")
       open("tmp", "r:euc-jp:utf-8") {|f|
         assert_equal(Encoding::EUC_JP, f.external_encoding)
         assert_equal(Encoding::UTF_8, f.internal_encoding)
@@ -134,7 +164,7 @@ EOT
     }
   end
 
-  def test_open_r_enc_enc_in_opt
+  def test_open_r_encname_encname_in_opt
     with_tmpdir {
       generate_file('tmp', "")
       open("tmp", "r", encoding: "euc-jp:utf-8") {|f|
@@ -144,7 +174,17 @@ EOT
     }
   end
 
-  def test_open_r_enc_enc_in_opt2
+  def test_open_r_enc_enc_in_opt
+    with_tmpdir {
+      generate_file('tmp', "")
+      open("tmp", "r", external_encoding: Encoding::EUC_JP, internal_encoding: Encoding::UTF_8) {|f|
+        assert_equal(Encoding::EUC_JP, f.external_encoding)
+        assert_equal(Encoding::UTF_8, f.internal_encoding)
+      }
+    }
+  end
+
+  def test_open_r_externalencname_internalencname_in_opt
     with_tmpdir {
       generate_file('tmp', "")
       open("tmp", "r", external_encoding: "euc-jp", internal_encoding: "utf-8") {|f|
@@ -2006,6 +2046,15 @@ EOT
            assert_equal("", r.read, bug)
            r.close
          end)
+  end
+
+  def test_getc_ascii_only
+    bug4557 = '[ruby-core:35630]'
+    c = with_tmpdir {
+      open("a", "wb") {|f| f.puts "a"}
+      open("a", "rt") {|f| f.getc}
+    }
+    assert(c.ascii_only?, "should be ascii_only #{bug4557}")
   end
 end
 

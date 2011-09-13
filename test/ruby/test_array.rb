@@ -890,6 +890,7 @@ class TestArray < Test::Unit::TestCase
     a = @cls[]
     assert_equal("", a.join)
     assert_equal("", a.join(','))
+    assert_equal(Encoding::US_ASCII, a.join.encoding)
 
     $, = ""
     a = @cls[1, 2]
@@ -1455,6 +1456,12 @@ class TestArray < Test::Unit::TestCase
     assert_raise(ArgumentError) { a.uniq!(1) }
     assert_raise(ArgumentError) { f.uniq!(1) }
     assert_raise(RuntimeError) { f.uniq! }
+
+    assert_nothing_raised do
+      a = [ {c: "b"}, {c: "r"}, {c: "w"}, {c: "g"}, {c: "g"} ]
+      a.sort_by!{|e| e[:c]}
+      a.uniq!   {|e| e[:c]}
+    end
   end
 
   def test_uniq_bang_with_block

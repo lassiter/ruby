@@ -362,7 +362,7 @@ static char *
 BSD__uqtoa(register u_quad_t val, char *endp, int base, int octzero, const char *xdigs)
 {
 	register char *cp = endp;
-	register long sval;
+	register quad_t sval;
 
 	/*
 	 * Handle the three cases separately, in the hope of getting
@@ -1165,6 +1165,7 @@ cvt(value, ndigits, flags, sign, decpt, ch, length, buf)
 	else {
 	    digits = BSD__dtoa(value, mode, ndigits, decpt, &dsgn, &rve);
 	}
+	buf[0] = 0; /* rve - digits may be 0 */
 	memcpy(buf, digits, rve - digits);
 	xfree(digits);
 	rve = buf + (rve - digits);

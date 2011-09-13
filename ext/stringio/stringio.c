@@ -83,7 +83,7 @@ static const rb_data_type_t strio_data_type = {
 static struct StringIO*
 get_strio(VALUE self)
 {
-    struct StringIO *ptr = check_strio(self);
+    struct StringIO *ptr = check_strio(rb_io_taint_check(self));
 
     if (!ptr) {
 	rb_raise(rb_eIOError, "uninitialized stream");
@@ -310,7 +310,7 @@ strio_set_string(VALUE self, VALUE string)
 {
     struct StringIO *ptr = StringIO(self);
 
-    if (!OBJ_TAINTED(self)) rb_secure(4);
+    rb_io_taint_check(self);
     ptr->flags &= ~FMODE_READWRITE;
     StringValue(string);
     ptr->flags = OBJ_FROZEN(string) ? FMODE_READABLE : FMODE_READWRITE;
@@ -502,7 +502,7 @@ strio_set_lineno(VALUE self, VALUE lineno)
 static VALUE
 strio_reopen(int argc, VALUE *argv, VALUE self)
 {
-    if (!OBJ_TAINTED(self)) rb_secure(4);
+    rb_io_taint_check(self);
     if (argc == 1 && TYPE(*argv) != T_STRING) {
 	return strio_copy(self, *argv);
     }
@@ -919,18 +919,17 @@ strio_getline(int argc, VALUE *argv, struct StringIO *ptr)
 {
     const char *s, *e, *p;
     long n, limit = 0;
-    VALUE str;
+    VALUE str, lim;
 
-    if (argc == 0) {
+    rb_scan_args(argc, argv, "02", &str, &lim);
+    switch (argc) {
+      case 0:
 	str = rb_rs;
-    }
-    else {
-	VALUE lim, tmp;
+	break;
 
-	rb_scan_args(argc, argv, "11", &str, &lim);
-	if (!NIL_P(lim)) limit = NUM2LONG(lim);
-	else if (!NIL_P(str) && TYPE(str) != T_STRING) {
-	    tmp = rb_check_string_type(str);
+      case 1:
+	if (!NIL_P(str) && TYPE(str) != T_STRING) {
+	    VALUE tmp = rb_check_string_type(str);
 	    if (NIL_P(tmp)) {
 		limit = NUM2LONG(str);
 		if (limit == 0) return rb_str_new(0,0);
@@ -940,9 +939,12 @@ strio_getline(int argc, VALUE *argv, struct StringIO *ptr)
 		str = tmp;
 	    }
 	}
-	else if (!NIL_P(str)) {
-	    StringValue(str);
-	}
+	break;
+
+      case 2:
+	if (!NIL_P(str)) StringValue(str);
+	limit = NUM2LONG(lim);
+	break;
     }
 
     if (ptr->pos >= (n = RSTRING_LEN(ptr->string))) {

@@ -310,7 +310,8 @@ rb_class_name(VALUE klass)
 const char *
 rb_class2name(VALUE klass)
 {
-    return RSTRING_PTR(rb_class_name(klass));
+    VALUE name = rb_class_name(klass);
+    return RSTRING_PTR(name);
 }
 
 const char *
@@ -1588,7 +1589,7 @@ rb_const_get_0(VALUE klass, ID id, int exclude, int recurse)
 	    }
 	    return value;
 	}
-	if (!recurse && klass != rb_cObject) break;
+	if (!recurse) break;
 	tmp = RCLASS_SUPER(tmp);
     }
     if (!exclude && !mod_retry && BUILTIN_TYPE(klass) == T_MODULE) {
@@ -1778,7 +1779,7 @@ rb_const_defined_0(VALUE klass, ID id, int exclude, int recurse)
 		return (int)Qfalse;
 	    return (int)Qtrue;
 	}
-	if (!recurse && klass != rb_cObject) break;
+	if (!recurse) break;
 	tmp = RCLASS_SUPER(tmp);
     }
     if (!exclude && !mod_retry && BUILTIN_TYPE(klass) == T_MODULE) {

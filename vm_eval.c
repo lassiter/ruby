@@ -1014,7 +1014,8 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, NODE *cref, const char
 	th->base_block = 0;
 
 	if (0) {		/* for debug */
-	    printf("%s\n", RSTRING_PTR(rb_iseq_disasm(iseqval)));
+	    VALUE disasm = rb_iseq_disasm(iseqval);
+	    printf("%s\n", StringValuePtr(disasm));
 	}
 
 	/* save new env */
@@ -1437,6 +1438,7 @@ rb_throw_obj(VALUE tag, VALUE value)
     }
     if (!tt) {
 	VALUE desc = rb_inspect(tag);
+	RB_GC_GUARD(desc);
 	rb_raise(rb_eArgError, "uncaught throw %s", RSTRING_PTR(desc));
     }
     rb_trap_restore_mask();

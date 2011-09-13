@@ -469,6 +469,7 @@ class TestTime < Test::Unit::TestCase
     assert_equal(1, T2000.yday)
     assert_equal(false, T2000.isdst)
     assert_equal("UTC", T2000.zone)
+    assert_equal(Encoding.find("locale"), T2000.zone.encoding)
     assert_equal(0, T2000.gmt_offset)
     assert(!T2000.sunday?)
     assert(!T2000.monday?)
@@ -490,6 +491,7 @@ class TestTime < Test::Unit::TestCase
     assert_equal(t.yday, Time.at(946684800).yday)
     assert_equal(t.isdst, Time.at(946684800).isdst)
     assert_equal(t.zone, Time.at(946684800).zone)
+    assert_equal(Encoding.find("locale"), Time.at(946684800).zone.encoding)
     assert_equal(t.gmt_offset, Time.at(946684800).gmt_offset)
     assert_equal(t.sunday?, Time.at(946684800).sunday?)
     assert_equal(t.monday?, Time.at(946684800).monday?)
@@ -632,6 +634,9 @@ class TestTime < Test::Unit::TestCase
                  t.strftime("%m/%d/%Y %l:%M:%S.%9N"))
     assert_equal("03/14/1592  6:53:58.97932384",
                  t.strftime("%m/%d/%Y %l:%M:%S.%8N"))
+
+    # [ruby-core:33985]
+    assert_equal("3000000000", Time.at(3000000000).strftime('%s'))
   end
 
   def test_delegate
