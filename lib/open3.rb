@@ -71,6 +71,8 @@ module Open3
   # Closing stdin, stdout and stderr does not wait the process.
   #
   def popen3(*cmd, &block)
+    return IO::popen3(*cmd, &block) if RUBY_ENGINE == 'jruby'
+    
     if Hash === cmd.last
       opts = cmd.pop.dup
     else

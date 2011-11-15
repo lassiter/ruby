@@ -1682,9 +1682,11 @@ class TestArray < Test::Unit::TestCase
     end
   end
 
-  def test_ary_new
-    assert_raise(ArgumentError) { [].to_enum.first(-1) }
-    assert_raise(ArgumentError) { [].to_enum.first(LONGP) }
+  unless RUBY_ENGINE == 'jruby'
+    def test_ary_new
+      assert_raise(ArgumentError) { [].to_enum.first(-1) }
+      assert_raise(ArgumentError) { [].to_enum.first(LONGP) }
+    end
   end
 
   def test_try_convert

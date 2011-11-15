@@ -39,9 +39,11 @@ module Psych
       assert_match('日本語', @out.string)
     end
 
-    def test_start_stream_arg_error
-      assert_raises(TypeError) do
-        @emitter.start_stream 'asdfasdf'
+    unless RUBY_ENGINE == 'jruby'
+      def test_start_stream_arg_error
+        assert_raises(TypeError) do
+          @emitter.start_stream 'asdfasdf'
+        end
       end
     end
 
@@ -61,19 +63,21 @@ module Psych
       end
     end
 
-    def test_scalar_arg_error
-      @emitter.start_stream Psych::Nodes::Stream::UTF8
-      @emitter.start_document [], [], false
-
-      [
-        [:foo, nil, nil, false, true, 1],
-        ['foo', Object.new, nil, false, true, 1],
-        ['foo', nil, Object.new, false, true, 1],
-        ['foo', nil, nil, false, true, :foo],
-        [nil, nil, nil, false, true, 1],
-      ].each do |args|
-        assert_raises(TypeError) do
-          @emitter.scalar(*args)
+    unless RUBY_ENGINE = 'jruby'
+      def test_scalar_arg_error
+        @emitter.start_stream Psych::Nodes::Stream::UTF8
+        @emitter.start_document [], [], false
+        
+        [
+          [:foo, nil, nil, false, true, 1],
+          ['foo', Object.new, nil, false, true, 1],
+          ['foo', nil, Object.new, false, true, 1],
+          ['foo', nil, nil, false, true, :foo],
+          [nil, nil, nil, false, true, 1],
+        ].each do |args|
+          assert_raises(TypeError) do
+            @emitter.scalar(*args)
+          end
         end
       end
     end

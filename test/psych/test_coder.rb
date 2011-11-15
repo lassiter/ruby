@@ -162,10 +162,12 @@ module Psych
       assert_equal Psych::Nodes::Mapping::BLOCK, bar.style
     end
 
-    def test_dump_with_tag
-      foo = TaggingCoder.new
-      assert_match(/hello/, Psych.dump(foo))
-      assert_match(/\{aa/, Psych.dump(foo))
+    unless RUBY_ENGINE == 'jruby'
+      def test_dump_with_tag
+        foo = TaggingCoder.new
+        assert_match(/hello/, Psych.dump(foo))
+        assert_match(/\{aa/, Psych.dump(foo))
+      end
     end
 
     def test_dump_encode_with

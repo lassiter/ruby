@@ -93,7 +93,7 @@ module Psych
   VERSION         = '1.2.1'
 
   # The version of libyaml Psych is using
-  LIBYAML_VERSION = Psych.libyaml_version.join '.'
+  LIBYAML_VERSION = Psych.libyaml_version.join '.' unless RUBY_ENGINE == 'jruby'
 
   class Exception < RuntimeError
   end
