@@ -1,3 +1,139 @@
+Mon Jan 23 18:18:58 2012  NARUSE, Yui  <naruse@ruby-lang.org>
+
+	* encoding.c (rb_enc_compatible): fix segv on symbols.
+	  [ruby-core:42204] [Bug #5921]
+
+Tue Jan 17 17:18:41 2012  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* configure.in (SPT_TYPE): enable as SPT_REUSEARGV on Darwin.
+
+	* missing/setproctitle.c (ruby_init_setproctitle): changed prefix.
+
+Mon Jan 16 16:41:53 2012  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* lib/optparse.rb (Regexp): fix incorrect options when casting to
+	  a Regexp, and suppress encoding option warnings.
+	  https://github.com/ruby/ruby/pull/82
+
+Fri Jan 13 15:22:43 2012  Tanaka Akira  <akr@fsij.org>
+
+	* time.c (TIME_COPY_GMT): copy vtm.utc_offset and vtm.zone too.
+	  patch by Tomoyuki Chikanaga.
+	  [ruby-dev:44827] [Bug #5586]
+
+Thu Jan 12 13:52:13 2012  NARUSE, Yui  <naruse@ruby-lang.org>
+
+	* cont.c (cont_restore_0): prevent optimizing out `sp'. sp is used for
+	  reserving a memory space with ALLOCA_N for restoring machine stack
+	  stored in cont->machine_stack, but clang optimized out it (and
+	  maybe #5851 is also caused by this).
+	  This affected TestContinuation#test_check_localvars.
+
+	* cont.c (cont_restore_1): revert workaround introduced in r32201.
+
+Thu Jan 12 01:42:08 2012  CHIKANAGA Tomoyuki  <nagachika00@gmail.com>
+
+	* test/ruby/test_io.rb (test_autoclose_true_closed_by_finalizer,
+	  test_autoclose_true_closed_by_finalizer): skip if IO objects are
+	  not recycled yet. [ruby-dev:45098] [Bug #5850]
+
+Thu Jan 12 01:41:34 2012  CHIKANAGA Tomoyuki  <nagachika00@gmail.com>
+
+	* lib/tempfile.rb (Tempfile#_close): clear @tempfile and @data[1] even
+	  when exception is raised at @tempfile.close. [ruby-dev:45113]
+
+	* lib/tempfile.rb (Tempfile#unlink): fix a typo.
+
+Thu Jan 12 01:41:13 2012  CHIKANAGA Tomoyuki  <nagachika00@gmail.com>
+
+	* gc.c (run_finalizer): clear rb_thread_t::errinfo when ignore
+	  an exception under rb_protect(). [ruby-dev:45113]
+
+Thu Jan 12 01:40:33 2012  NAKAMURA Usaku  <usa@ruby-lang.org>
+
+	* test/ruby/test_io.rb (TestIO#test_autoclose): Tempfile.new doesn't
+	  accept the block argument.
+
+Sat Jan  7 22:46:36 2012  Kouhei Sutou  <kou@cozmixng.org>
+
+	* lib/rexml/parsers/baseparser.rb: use private instead of _xxx
+	  method name. This is Ruby code not Python code.
+	  refs #5696
+
+Tue Jan 03 23:57:37 2012  Ayumu AIZAWA  <ayumu.aizawa@gmail.com>
+
+	* lib/rexml/parsers/baseparser.rb: rexml BaseParser uses
+	  instance_eval unnecessarily on listener add.
+	  patch from Charles Nutter. [Bug #5696] [ruby-core:41437]
+
+Tue Jan 03 19:13:05 2012  Ayumu AIZAWA  <ayumu.aizawa@gmail.com>
+
+	* test/rexml/test_sax.rb: add require 'rexml/document'.
+	  [Backport #5834] [ruby-dev:45079]
+
+Tue Jan  3 19:05:42 2012  Naohisa Goto  <ngotogenome@gmail.com>
+
+	* include/ruby/defines.h (FLUSH_REGISTER_WINDOWS): move sparc asm code
+	  to a separete file sparc.c for preventing inlining optimization.
+	  Patched by Jurij Smakov. [Bug #5244] [ruby-core:40685]
+	* sparc.c (rb_sparc_flush_register_windows): ditto.
+	* configure.in: ditto.
+
+Mon Jan  2 23:52:20 2012  TAKAO Kouji  <kouji@takao7.net>
+
+	* ext/readline/readline.c (Init_readline): libedit check
+	  rl_getc_function only when rl_initialize() is called, and
+	  using_history() call rl_initialize(). This assignment should be
+	  placed before using_history(). [ruby-core:40641] [Bug #5539]
+
+Mon Jan  2 23:47:58 2012  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* tool/rbinstall.rb (install_recursive, bin-comm): split mere
+	  string not path name.  [ruby-core:40462] [Bug #5492]
+
+Mon Jan  2 23:41:57 2012  Tajima Akil <artonx@yahoo.co.jp>
+
+	* win32/Makefile.sub (CONFIG_H): have stdint.h if VC2010.
+	  [Bug #5243]
+
+Mon Jan  2 21:40:45 2012  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* tool/merger.rb (#version_up): version.h date should be Japanese
+	  locale date.
+
+Mon Jan  2 21:36:56 2012  Luis Lavena  <luislavena@gmail.com>
+
+	* configure.in: check -fno-omit-frame-pointer acceptance and usage
+	  under MinGW. [ruby-core:39957] [Bug #5407]
+
+Mon Jan  2 20:05:10 2012  NARUSE, Yui  <naruse@ruby-lang.org>
+
+	* include/ruby/ruby.h (SIZE_MAX): define SIZE_MAX if not defined.
+	  patched by The Written Word Inc. [ruby-core:40422] [Bug #5489]
+
+Mon Jan  2 20:00:01 2012  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* ext/pty/pty.c (pty_check): should return nil until the child
+	  terminates or stops.  [ruby-dev:44600] [Bug #2642]
+
+Mon Jan  2 19:27:18 2012  Yusuke Endoh  <mame@tsg.ne.jp>
+
+	* thread.c (update_coverage): skip coverage count up if the current
+	  line is out of the way.  rb_sourceline() is unreliable when source
+	  code is big.  [ruby-dev:44413]
+
+	* test/coverage/test_coverage.rb: add a test for above.
+
+Mon Jan  2 19:08:54 2012  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* thread_pthread.c (gvl_yield): don't prevent concurrent sched_yield().
+	  [Bug #5130] [ruby-core:38647]
+
+Mon Jan  2 18:54:52 2012  NAKAMURA Usaku  <usa@ruby-lang.org>
+
+	* win32/configure.bat: disable delayed expansion of enironment variable.
+	  [Bug #5517] [ruby-core:40531]
+
 Wed Dec 28 11:22:45 2011  Nobuyoshi Nakada  <nobu@ruby-lang.org>
 
 	* lib/fileutils.rb (FileUtils::Entry_#entries): use utility method
