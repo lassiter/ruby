@@ -14,7 +14,7 @@
   $Id$
 =end
 
-require 'openssl.so'
+require 'openssl.jar'
 
 require 'openssl/bn'
 require 'openssl/cipher'
