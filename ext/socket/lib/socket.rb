@@ -1,4 +1,4 @@
-require 'socket.so'
+require 'socket.jar'
 
 class Addrinfo
   # creates an Addrinfo object from the arguments.
