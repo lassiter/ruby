@@ -18,7 +18,6 @@ module Psych
       def test_yaml_tree_can_take_an_emitter
         io = StringIO.new
         e  = Psych::Emitter.new io
-puts e.class
         v = Visitors::YAMLTree.new({}, e)
         v.start
         v << "hello world"
