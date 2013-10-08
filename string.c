@@ -1751,6 +1751,13 @@ rb_str_unlocktmp(VALUE str)
     return str;
 }
 
+VALUE
+rb_str_locktmp_ensure(VALUE str, VALUE (*func)(VALUE), VALUE arg)
+{
+    rb_str_locktmp(str);
+    return rb_ensure(func, arg, rb_str_unlocktmp, str);
+}
+
 void
 rb_str_set_len(VALUE str, long len)
 {
@@ -2098,7 +2105,8 @@ rb_str_concat(VALUE str1, VALUE str2)
 
     if (enc == rb_usascii_encoding()) {
 	/* US-ASCII automatically extended to ASCII-8BIT */
-	char buf[1] = {(char)code};
+	char buf[1];
+	buf[0] = (char)code;
 	if (code > 0xFF) {
 	    rb_raise(rb_eRangeError, "%u out of char range", code);
 	}
@@ -4041,9 +4049,28 @@ str_byte_substr(VALUE str, long beg, long len)
     }
     else {
 	str2 = rb_str_new5(str, p, len);
-	rb_enc_cr_str_copy_for_substr(str2, str);
-	OBJ_INFECT(str2, str);
     }
+
+    str_enc_copy(str2, str);
+
+    if (RSTRING_LEN(str2) == 0) {
+	if (!rb_enc_asciicompat(STR_ENC_GET(str)))
+	    ENC_CODERANGE_SET(str2, ENC_CODERANGE_VALID);
+	else
+	    ENC_CODERANGE_SET(str2, ENC_CODERANGE_7BIT);
+    }
+    else {
+	switch (ENC_CODERANGE(str)) {
+	  case ENC_CODERANGE_7BIT:
+	    ENC_CODERANGE_SET(str2, ENC_CODERANGE_7BIT);
+	    break;
+	  default:
+	    ENC_CODERANGE_SET(str2, ENC_CODERANGE_UNKNOWN);
+	    break;
+	}
+    }
+
+    OBJ_INFECT(str2, str);
 
     return str2;
 }
@@ -7492,7 +7519,7 @@ sym_to_sym(VALUE sym)
 }
 
 static VALUE
-sym_call(VALUE args, VALUE sym, int argc, VALUE *argv)
+sym_call(VALUE args, VALUE sym, int argc, VALUE *argv, VALUE passed_proc)
 {
     VALUE obj;
 
@@ -7500,7 +7527,7 @@ sym_call(VALUE args, VALUE sym, int argc, VALUE *argv)
 	rb_raise(rb_eArgError, "no receiver given");
     }
     obj = argv[0];
-    return rb_funcall_passing_block(obj, (ID)sym, argc - 1, argv + 1);
+    return rb_funcall_with_block(obj, (ID)sym, argc - 1, argv + 1, passed_proc);
 }
 
 /*

@@ -300,7 +300,7 @@ end
 def xsystem command, opts = nil
   varpat = /\$\((\w+)\)|\$\{(\w+)\}/
   if varpat =~ command
-    vars = Hash.new {|h, k| h[k] = ''; ENV[k]}
+    vars = Hash.new {|h, k| h[k] = ENV[k]}
     command = command.dup
     nil while command.gsub!(varpat) {vars[$1||$2]}
   end
@@ -619,14 +619,14 @@ def try_func(func, libs, headers = nil, &b)
   try_link(<<"SRC", libs, &b) or
 #{headers}
 /*top*/
-#{MAIN_DOES_NOTHING}
 int t() { #{decltype["volatile p"]}; p = (#{decltype[]})#{func}; return 0; }
+#{MAIN_DOES_NOTHING "t"}
 SRC
   call && try_link(<<"SRC", libs, &b)
 #{headers}
 /*top*/
-#{MAIN_DOES_NOTHING}
 int t() { #{func}(); return 0; }
+#{MAIN_DOES_NOTHING "t"}
 SRC
 end
 
@@ -636,8 +636,8 @@ def try_var(var, headers = nil, &b)
   try_compile(<<"SRC", &b)
 #{headers}
 /*top*/
-#{MAIN_DOES_NOTHING}
 int t() { const volatile void *volatile p; p = &(&#{var})[0]; return 0; }
+#{MAIN_DOES_NOTHING "t"}
 SRC
 end
 
@@ -938,18 +938,31 @@ def have_header(header, preheaders = nil, &b)
 end
 
 # Returns whether or not the given +framework+ can be found on your system.
-# If found, a macro is passed as a preprocessor constant to the compiler using
-# the framework name, in uppercase, prepended with 'HAVE_FRAMEWORK_'.
+# If found, a macro is passed as a preprocessor constant to the compiler
+# using the framework name, in uppercase, prepended with +HAVE_FRAMEWORK_+.
 #
-# For example, if have_framework('Ruby') returned true, then the HAVE_FRAMEWORK_RUBY
-# preprocessor macro would be passed to the compiler.
+# For example, if <code>have_framework('Ruby')</code> returned true, then
+# the +HAVE_FRAMEWORK_RUBY+ preprocessor macro would be passed to the
+# compiler.
 #
+# If +fw+ is a pair of the framework name and its header file name
+# that header file is checked, instead of the normally used header
+# file which is named same as the framework.
 def have_framework(fw, &b)
+  if Array === fw
+    fw, header = *fw
+  else
+    header = "#{fw}.h"
+  end
   checking_for fw do
-    src = cpp_include("#{fw}/#{fw}.h") << "\n" "int main(void){return 0;}"
-    if try_link(src, opt = "-framework #{fw}", &b)
+    src = cpp_include("#{fw}/#{header}") << "\n" "int main(void){return 0;}"
+    opt = " -framework #{fw}"
+    if try_link(src, "-ObjC#{opt}", &b)
       $defs.push(format("-DHAVE_FRAMEWORK_%s", fw.tr_cpp))
-      $LDFLAGS << " " << opt
+      # TODO: non-worse way than this hack, to get rid of separating
+      # option and its argument.
+      $LDFLAGS << " -ObjC" unless /(\A|\s)-ObjC(\s|\z)/ =~ $LDFLAGS
+      $LDFLAGS << opt
       true
     else
       false
@@ -1002,8 +1015,8 @@ def have_struct_member(type, member, headers = nil, &b)
     if try_compile(<<"SRC", &b)
 #{cpp_include(headers)}
 /*top*/
-#{MAIN_DOES_NOTHING}
 int s = (char *)&((#{type}*)0)->#{member} - (char *)0;
+#{MAIN_DOES_NOTHING "s"}
 SRC
       $defs.push(format("-DHAVE_%s_%s", type.tr_cpp, member.tr_cpp))
       $defs.push(format("-DHAVE_ST_%s", member.tr_cpp)) # backward compatibility
@@ -1243,8 +1256,8 @@ def scalar_ptr_type?(type, member = nil, headers = nil, &b)
 #{cpp_include(headers)}
 /*top*/
 volatile #{type} conftestval;
-#{MAIN_DOES_NOTHING}
 int t() {return (int)(1-*(conftestval#{member ? ".#{member}" : ""}));}
+#{MAIN_DOES_NOTHING "t"}
 SRC
 end
 
@@ -1255,8 +1268,8 @@ def scalar_type?(type, member = nil, headers = nil, &b)
 #{cpp_include(headers)}
 /*top*/
 volatile #{type} conftestval;
-#{MAIN_DOES_NOTHING}
 int t() {return (int)(1-(conftestval#{member ? ".#{member}" : ""}));}
+#{MAIN_DOES_NOTHING "t"}
 SRC
 end
 
@@ -1702,7 +1715,7 @@ DEFS     = #{CONFIG['DEFS']}
 CPPFLAGS = #{extconf_h}#{$CPPFLAGS}
 CXXFLAGS = $(CFLAGS) #{CONFIG['CXXFLAGS']}
 ldflags  = #{$LDFLAGS}
-dldflags = #{$DLDFLAGS}
+dldflags = #{$DLDFLAGS} #{CONFIG['EXTDLDFLAGS']}
 ARCH_FLAG = #{$ARCH_FLAG}
 DLDFLAGS = $(ldflags) $(dldflags) $(ARCH_FLAG)
 LDSHARED = #{CONFIG['LDSHARED']}
@@ -1925,7 +1938,7 @@ def create_makefile(target, srcprefix = nil)
         makedef = %{-pe "$_.sub!(/^(?=\\w)/,'#{EXPORT_PREFIX}') unless 1../^EXPORTS$/i"}
       end
     else
-      makedef = %{-e "puts 'EXPORTS', '#{EXPORT_PREFIX}' + 'Init_$(TARGET)'.sub(/\\..*\\z/,'')"}
+      makedef = %{-e "puts 'EXPORTS', '$(TARGET_ENTRY)'"}
     end
     if makedef
       $cleanfiles << '$(DEFFILE)'
@@ -1969,6 +1982,8 @@ LIBS = #{$LIBRUBYARG} #{$libs} #{$LIBS}
 SRCS = #{srcs.collect(&File.method(:basename)).join(' ')}
 OBJS = #{$objs.join(" ")}
 TARGET = #{target}
+TARGET_NAME = #{target && target[/\A\w+/]}
+TARGET_ENTRY = #{EXPORT_PREFIX || ''}Init_$(TARGET_NAME)
 DLLIB = #{dllib}
 EXTSTATIC = #{$static || ""}
 STATIC_LIB = #{staticlib unless $static.nil?}
@@ -2224,6 +2239,19 @@ def mkmf_failed(path)
   end
 end
 
+def MAIN_DOES_NOTHING(*refs)
+  src = MAIN_DOES_NOTHING
+  unless refs.empty?
+    src = src.sub(/\{/) do
+      $& +
+        "\n  if (argc > 1000000) {\n" +
+        refs.map {|n|"    printf(\"%p\", &#{n});\n"}.join("") +
+        "  }\n"
+    end
+  end
+  src
+end
+
 # :startdoc:
 
 init_mkmf
@@ -2290,7 +2318,7 @@ LINK_SO = config_string('LINK_SO') ||
 LIBPATHFLAG = config_string('LIBPATHFLAG') || ' -L"%s"'
 RPATHFLAG = config_string('RPATHFLAG') || ''
 LIBARG = config_string('LIBARG') || '-l%s'
-MAIN_DOES_NOTHING = config_string('MAIN_DOES_NOTHING') || 'int main() {return 0;}'
+MAIN_DOES_NOTHING = config_string('MAIN_DOES_NOTHING') || "int main(int argc, char **argv)\n{\n  return 0;\n}"
 UNIVERSAL_INTS = config_string('UNIVERSAL_INTS') {|s| Shellwords.shellwords(s)} ||
   %w[int short long long\ long]
 

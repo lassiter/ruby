@@ -198,6 +198,18 @@ class  OpenSSL::TestASN1 < Test::Unit::TestCase
     encode_decode_test(OpenSSL::ASN1::Integer, [72, -127, -128, 128, -1, 0, 1, -(2**12345), 2**12345])
   end
 
+  def test_encode_nil
+    m = OpenSSL::ASN1
+    [ 
+      m::Boolean, m::Integer, m::BitString, m::OctetString,
+      m::ObjectId, m::Enumerated, m::UTF8String, m::UTCTime,
+      m::GeneralizedTime, m::Sequence, m::Set
+    ].each do |klass|
+      #Primitives raise TypeError, Constructives NoMethodError
+      assert_raise(TypeError, NoMethodError) { klass.send(:new, nil).to_der }
+    end
+  end
+
   def encode_decode_test(type, values)
     values.each do |v|
       assert_equal(v, OpenSSL::ASN1.decode(type.new(v).to_der).value)
@@ -249,6 +261,14 @@ rEzBQ0F9dUyqQ9gyRg8KHhDfv9HzT1d/rnUZMkoombwYBRIUChGCYV0GnJcan2Zm
       assert_universal(OpenSSL::ASN1::INTEGER, asn1)
       assert_equal(i + 1, asn1.value)
     end
+  end
+
+  def test_decode_utctime
+    expected = Time.at 1374535380
+    assert_equal expected, OpenSSL::ASN1.decode("\x17\v1307222323Z").value
+
+    expected += 17
+    assert_equal expected, OpenSSL::ASN1.decode("\x17\r130722232317Z").value
   end
 
   def test_create_inf_length_primitive
