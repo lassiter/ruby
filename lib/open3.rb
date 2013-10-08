@@ -80,6 +80,8 @@ module Open3
   # If you really needs stdout and stderr output as separate strings, you can consider Open3.capture3.
   #
   def popen3(*cmd, &block)
+    return IO::popen3(*cmd, &block) if RUBY_ENGINE == 'jruby'
+    
     if Hash === cmd.last
       opts = cmd.pop.dup
     else
