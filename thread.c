@@ -390,8 +390,8 @@ typedef struct rb_mutex_struct
     rb_nativethread_lock_t lock;
     rb_nativethread_cond_t cond;
     struct rb_thread_struct volatile *th;
-    int cond_waiting;
     struct rb_mutex_struct *next_mutex;
+    int cond_waiting;
     int allow_trap;
 } rb_mutex_t;
 
@@ -2893,8 +2893,6 @@ rb_thread_aset(VALUE self, VALUE id, VALUE val)
  *  The value "bar" is returned for the thread local, where nil is returned
  *  for the fiber local.  The fiber is executed in the same thread, so the
  *  thread local values are available.
- *
- *  See also Thread#[]
  */
 
 static VALUE

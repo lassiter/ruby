@@ -999,6 +999,20 @@ send
     CALL_METHOD(ci);
 }
 
+DEFINE_INSN
+opt_str_freeze
+(VALUE str)
+()
+(VALUE val)
+{
+    if (BASIC_OP_UNREDEFINED_P(BOP_FREEZE, STRING_REDEFINED_OP_FLAG)) {
+	val = str;
+    }
+    else {
+	val = rb_funcall(rb_str_resurrect(str), idFreeze, 0);
+    }
+}
+
 /**
   @c optimize
   @e Invoke method without block, splat
@@ -1183,7 +1197,7 @@ getinlinecache
 ()
 (VALUE val)
 {
-    if (ic->ic_vmstat == GET_CONSTANT_STATE_VERSION()) {
+    if (ic->ic_serial == GET_CONSTANT_SERIAL()) {
 	val = ic->ic_value.value;
 	JUMP(dst);
     }
@@ -1208,7 +1222,7 @@ setinlinecache
 	rb_iseq_add_mark_object(GET_ISEQ(), val);
     }
     ic->ic_value.value = val;
-    ic->ic_vmstat = GET_CONSTANT_STATE_VERSION() - ruby_vm_const_missing_count;
+    ic->ic_serial = GET_CONSTANT_SERIAL() - ruby_vm_const_missing_count;
     ruby_vm_const_missing_count = 0;
 }
 

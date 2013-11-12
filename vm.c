@@ -71,9 +71,9 @@ static VALUE
 vm_invoke_proc(rb_thread_t *th, rb_proc_t *proc, VALUE self, VALUE defined_class,
 	       int argc, const VALUE *argv, const rb_block_t *blockptr);
 
-static vm_state_version_t ruby_vm_method_state_version = 1;
-static vm_state_version_t ruby_vm_constant_state_version = 1;
-static vm_state_version_t ruby_vm_sequence = 1;
+static rb_serial_t ruby_vm_method_serial = 1;
+static rb_serial_t ruby_vm_constant_serial = 1;
+static rb_serial_t ruby_vm_class_serial = 1;
 
 #include "vm_insnhelper.h"
 #include "vm_insnhelper.c"
@@ -88,10 +88,10 @@ static vm_state_version_t ruby_vm_sequence = 1;
 #define BUFSIZE 0x100
 #define PROCDEBUG 0
 
-vm_state_version_t
-rb_next_class_sequence(void)
+rb_serial_t
+rb_next_class_serial(void)
 {
-    return NEXT_CLASS_SEQUENCE();
+    return NEXT_CLASS_SERIAL();
 }
 
 VALUE rb_cRubyVM;
@@ -1082,6 +1082,7 @@ vm_init_redefined_flag(void)
     OP(EmptyP, EMPTY_P), (C(Array), C(String), C(Hash));
     OP(Succ, SUCC), (C(Fixnum), C(String), C(Time));
     OP(EqTilde, MATCH), (C(Regexp), C(String));
+    OP(Freeze, FREEZE), (C(String));
 #undef C
 #undef OP
 }
@@ -1673,7 +1674,9 @@ vm_memsize(const void *ptr)
     if (ptr) {
 	const rb_vm_t *vmobj = ptr;
 	size_t size = sizeof(rb_vm_t);
-	size += st_memsize(vmobj->living_threads);
+	if (vmobj->living_threads) {
+	    size += st_memsize(vmobj->living_threads);
+	}
 	if (vmobj->defined_strings) {
 	    size += DEFINED_EXPR * sizeof(VALUE);
 	}
