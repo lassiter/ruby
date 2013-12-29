@@ -225,7 +225,7 @@ VALUE rb_fiber_yield(int argc, VALUE *args);
 VALUE rb_fiber_current(void);
 VALUE rb_fiber_alive_p(VALUE);
 /* enum.c */
-VALUE rb_enum_values_pack(int, VALUE*);
+VALUE rb_enum_values_pack(int, const VALUE*);
 /* enumerator.c */
 VALUE rb_enumeratorize(VALUE, VALUE, int, VALUE *);
 typedef VALUE rb_enumerator_size_func(VALUE, VALUE, VALUE);
@@ -482,9 +482,12 @@ void rb_gc_call_finalizer_at_exit(void);
 VALUE rb_gc_enable(void);
 VALUE rb_gc_disable(void);
 VALUE rb_gc_start(void);
-void rb_gc_set_params(void);
+DEPRECATED(void rb_gc_set_params(void));
 VALUE rb_define_finalizer(VALUE, VALUE);
 VALUE rb_undefine_finalizer(VALUE);
+size_t rb_gc_count(void);
+size_t rb_gc_stat(VALUE);
+VALUE rb_gc_latest_gc_info(VALUE);
 /* hash.c */
 void st_foreach_safe(struct st_table *, int (*)(ANYARGS), st_data_t);
 VALUE rb_check_hash_type(VALUE);
@@ -885,6 +888,7 @@ struct timespec rb_time_timespec(VALUE time);
 /* variable.c */
 VALUE rb_mod_name(VALUE);
 VALUE rb_class_path(VALUE);
+VALUE rb_class_path_cached(VALUE);
 void rb_set_class_path(VALUE, VALUE, const char*);
 void rb_set_class_path_string(VALUE, VALUE, VALUE);
 VALUE rb_path_to_class(VALUE);

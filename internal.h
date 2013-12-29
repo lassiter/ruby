@@ -70,6 +70,12 @@ extern "C" {
 #define MUL_OVERFLOW_INT_P(a, b) MUL_OVERFLOW_SIGNED_INTEGER_P(a, b, INT_MIN, INT_MAX)
 
 #ifndef swap16
+# ifdef HAVE_BUILTIN___BUILTIN_BSWAP16
+#  define swap16(x) __builtin_bswap16(x)
+# endif
+#endif
+
+#ifndef swap16
 # define swap16(x)      ((uint16_t)((((x)&0xFF)<<8) | (((x)>>8)&0xFF)))
 #endif
 
@@ -246,14 +252,17 @@ struct rb_subclass_entry {
 
 #if defined(HAVE_LONG_LONG)
 typedef unsigned LONG_LONG rb_serial_t;
+#define SERIALT2NUM ULL2NUM
 #elif defined(HAVE_UINT64_T)
 typedef uint64_t rb_serial_t;
+#define SERIALT2NUM SIZET2NUM
 #else
 typedef unsigned long rb_serial_t;
+#define SERIALT2NUM ULONG2NUM
 #endif
 
 struct rb_classext_struct {
-    VALUE super;
+    struct st_table *iv_index_tbl;
     struct st_table *iv_tbl;
     struct st_table *const_tbl;
     rb_subclass_entry_t *subclasses;
@@ -270,6 +279,11 @@ struct rb_classext_struct {
     rb_alloc_func_t allocator;
 };
 
+struct method_table_wrapper {
+    st_table *tbl;
+    size_t serial;
+};
+
 /* class.c */
 void rb_class_subclass_add(VALUE super, VALUE klass);
 void rb_class_remove_from_super_subclasses(VALUE);
@@ -277,16 +291,28 @@ void rb_class_remove_from_super_subclasses(VALUE);
 #define RCLASS_EXT(c) (RCLASS(c)->ptr)
 #define RCLASS_IV_TBL(c) (RCLASS_EXT(c)->iv_tbl)
 #define RCLASS_CONST_TBL(c) (RCLASS_EXT(c)->const_tbl)
-#define RCLASS_M_TBL(c) (RCLASS(c)->m_tbl)
-#define RCLASS_IV_INDEX_TBL(c) (RCLASS(c)->iv_index_tbl)
+#define RCLASS_M_TBL_WRAPPER(c) (RCLASS(c)->m_tbl_wrapper)
+#define RCLASS_M_TBL(c) (RCLASS_M_TBL_WRAPPER(c) ? RCLASS_M_TBL_WRAPPER(c)->tbl : 0)
+#define RCLASS_IV_INDEX_TBL(c) (RCLASS_EXT(c)->iv_index_tbl)
 #define RCLASS_ORIGIN(c) (RCLASS_EXT(c)->origin)
 #define RCLASS_REFINED_CLASS(c) (RCLASS_EXT(c)->refined_class)
+#define RCLASS_SERIAL(c) (RCLASS_EXT(c)->class_serial)
+
+static inline void
+RCLASS_M_TBL_INIT(VALUE c)
+{
+    struct method_table_wrapper *wrapper;
+    wrapper = ALLOC(struct method_table_wrapper);
+    wrapper->tbl = st_init_numtable();
+    wrapper->serial = 0;
+    RCLASS_M_TBL_WRAPPER(c) = wrapper;
+}
 
 #undef RCLASS_SUPER
 static inline VALUE
 RCLASS_SUPER(VALUE klass)
 {
-    return RCLASS_EXT(klass)->super;
+    return RCLASS(klass)->super;
 }
 
 static inline VALUE
@@ -296,7 +322,7 @@ RCLASS_SET_SUPER(VALUE klass, VALUE super)
 	rb_class_remove_from_super_subclasses(klass);
 	rb_class_subclass_add(super, klass);
     }
-    OBJ_WRITE(klass, &RCLASS_EXT(klass)->super, super);
+    RB_OBJ_WRITE(klass, &RCLASS(klass)->super, super);
     return super;
 }
 
@@ -342,6 +368,7 @@ VALUE rb_insns_name_array(void);
 /* cont.c */
 VALUE rb_obj_is_fiber(VALUE);
 void rb_fiber_reset_root_local_storage(VALUE);
+void ruby_register_rollback_func_for_ensure(VALUE (*ensure_func)(ANYARGS), VALUE (*rollback_func)(ANYARGS));
 
 /* debug.c */
 PRINTF_ARGS(void ruby_debug_printf(const char*, ...), 1, 2);
@@ -427,12 +454,24 @@ NORETURN(void rb_syserr_fail_path_in(const char *func_name, int err, VALUE path)
 /* gc.c */
 void Init_heap(void);
 void *ruby_mimmalloc(size_t size);
+void ruby_mimfree(void *ptr);
 void rb_objspace_set_event_hook(const rb_event_flag_t event);
 void rb_gc_writebarrier_remember_promoted(VALUE obj);
+void ruby_gc_set_params(int safe_level);
 
+#if defined(HAVE_MALLOC_USABLE_SIZE) || defined(HAVE_MALLOC_SIZE) || defined(_WIN32)
+#define ruby_sized_xrealloc(ptr, new_size, old_size) ruby_xrealloc(ptr, new_size)
+#define ruby_sized_xrealloc2(ptr, new_count, element_size, old_count) ruby_xrealloc(ptr, new_count, element_size)
+#define ruby_sized_xfree(ptr, size) ruby_xfree(ptr)
+#define SIZED_REALLOC_N(var,type,n,old_n) REALLOC_N(var, type, n)
+#else
 void *ruby_sized_xrealloc(void *ptr, size_t new_size, size_t old_size) RUBY_ATTR_ALLOC_SIZE((2));
+void *ruby_sized_xrealloc2(void *ptr, size_t new_count, size_t element_size, size_t old_count) RUBY_ATTR_ALLOC_SIZE((2, 3));
 void ruby_sized_xfree(void *x, size_t size);
 #define SIZED_REALLOC_N(var,type,n,old_n) ((var)=(type*)ruby_sized_xrealloc((char*)(var), (n) * sizeof(type), (old_n) * sizeof(type)))
+#endif
+
+void rb_gc_resurrect(VALUE ptr);
 
 /* hash.c */
 struct st_table *rb_hash_tbl_raw(VALUE hash);
@@ -567,7 +606,7 @@ struct RBasicRaw {
 #define RBASIC_SET_CLASS_RAW(obj, cls) (((struct RBasicRaw *)((VALUE)(obj)))->klass = (cls))
 #define RBASIC_SET_CLASS(obj, cls)     do { \
     VALUE _obj_ = (obj); \
-    OBJ_WRITE(_obj_, &((struct RBasicRaw *)(_obj_))->klass, cls); \
+    RB_OBJ_WRITE(_obj_, &((struct RBasicRaw *)(_obj_))->klass, cls); \
 } while (0)
 
 /* parse.y */
@@ -734,13 +773,16 @@ void rb_print_backtrace(void);
 /* vm_eval.c */
 void Init_vm_eval(void);
 VALUE rb_current_realfilepath(void);
-VALUE rb_check_block_call(VALUE, ID, int, VALUE *, VALUE (*)(ANYARGS), VALUE);
+VALUE rb_check_block_call(VALUE, ID, int, const VALUE *, rb_block_call_func_t, VALUE);
 typedef void rb_check_funcall_hook(int, VALUE, ID, int, const VALUE *, VALUE);
 VALUE rb_check_funcall_with_hook(VALUE recv, ID mid, int argc, const VALUE *argv,
 				 rb_check_funcall_hook *hook, VALUE arg);
+VALUE rb_catch_protect(VALUE t, rb_block_call_func *func, VALUE data, int *stateptr);
 
 /* vm_insnhelper.c */
 VALUE rb_equal_opt(VALUE obj1, VALUE obj2);
+int rb_get_kwargs(VALUE keyword_hash, const ID *table, int required, int optional, VALUE *);
+VALUE rb_extract_keywords(VALUE *orighash);
 
 /* vm_method.c */
 void Init_eval_method(void);
@@ -758,6 +800,7 @@ VALUE rb_make_backtrace(void);
 void rb_backtrace_print_as_bugreport(void);
 int rb_backtrace_p(VALUE obj);
 VALUE rb_backtrace_to_str_ary(VALUE obj);
+VALUE rb_backtrace_to_location_ary(VALUE obj);
 void rb_backtrace_print_to(VALUE output);
 VALUE rb_vm_backtrace_object(void);
 
@@ -830,8 +873,9 @@ int rb_st_insert_id_and_value(VALUE obj, st_table *tbl, ID key, VALUE value);
 st_table *rb_st_copy(VALUE obj, struct st_table *orig_tbl);
 
 /* gc.c */
-size_t rb_gc_count(void);
 size_t rb_obj_memsize_of(VALUE);
+#define RB_OBJ_GC_FLAGS_MAX 5
+size_t rb_obj_gc_flags(VALUE, ID[], size_t);
 
 RUBY_SYMBOL_EXPORT_END
 

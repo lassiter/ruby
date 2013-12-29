@@ -27,6 +27,13 @@
 # endif
 #endif
 
+#define HAS_MISC_ATTRIBUTES(hash, klass) ( \
+    (klass = rb_obj_class(hash)) != rb_cHash || \
+    (klass = 0, \
+     FL_TEST((hash), FL_EXIVAR|FL_TAINT|HASH_PROC_DEFAULT) ||	\
+     !NIL_P(RHASH_IFNONE(hash))))
+#define HASH_REJECT_COPY_MISC_ATTRIBUTES 1
+
 static VALUE rb_hash_s_try_convert(VALUE, VALUE);
 
 /*
@@ -53,7 +60,7 @@ static ID id_hash, id_yield, id_default;
 VALUE
 rb_hash_set_ifnone(VALUE hash, VALUE ifnone)
 {
-    OBJ_WRITE(hash, (&RHASH(hash)->ifnone), ifnone);
+    RB_OBJ_WRITE(hash, (&RHASH(hash)->ifnone), ifnone);
     return hash;
 }
 
@@ -76,17 +83,20 @@ rb_any_cmp(VALUE a, VALUE b)
     return !rb_eql(a, b);
 }
 
+static VALUE
+hash_recursive(VALUE obj, VALUE arg, int recurse)
+{
+    if (recurse) return INT2FIX(0);
+    return rb_funcallv(obj, id_hash, 0, 0);
+}
+
 VALUE
 rb_hash(VALUE obj)
 {
-    VALUE hval = rb_funcall(obj, id_hash, 0);
-  retry:
-    switch (TYPE(hval)) {
-      case T_FIXNUM:
-	return hval;
+    VALUE hval = rb_exec_recursive_outer(hash_recursive, obj, 0);
 
-      case T_BIGNUM:
-        {
+    while (!FIXNUM_P(hval)) {
+        if (RB_TYPE_P(hval, T_BIGNUM)) {
             int sign;
             unsigned long ul;
             sign = rb_integer_pack(hval, &ul, 1, sizeof(ul), 0,
@@ -96,11 +106,9 @@ rb_hash(VALUE obj)
                 return LONG2FIX(-(long)ul);
             return LONG2FIX((long)ul);
         }
-
-      default:
 	hval = rb_to_int(hval);
-	goto retry;
     }
+    return hval;
 }
 
 static st_index_t
@@ -111,7 +119,9 @@ rb_any_hash(VALUE a)
 
     if (SPECIAL_CONST_P(a)) {
 	if (a == Qundef) return 0;
-	hnum = rb_hash_end(rb_hash_start((st_index_t)a));
+	hnum = rb_hash_start((st_index_t)a);
+	hnum = rb_hash_uint(hnum, (st_index_t)rb_any_hash);
+	hnum = rb_hash_end(hnum);
     }
     else if (BUILTIN_TYPE(a) == T_STRING) {
 	hnum = rb_str_hash(a);
@@ -141,10 +151,12 @@ struct foreach_safe_arg {
 };
 
 static int
-foreach_safe_i(st_data_t key, st_data_t value, struct foreach_safe_arg *arg)
+foreach_safe_i(st_data_t key, st_data_t value, st_data_t args, int error)
 {
     int status;
+    struct foreach_safe_arg *arg = (void *)args;
 
+    if (error) return ST_STOP;
     status = (*arg->func)(key, value, arg->arg);
     if (status == ST_CONTINUE) {
 	return ST_CHECK;
@@ -174,12 +186,13 @@ struct hash_foreach_arg {
 };
 
 static int
-hash_foreach_iter(st_data_t key, st_data_t value, st_data_t argp)
+hash_foreach_iter(st_data_t key, st_data_t value, st_data_t argp, int error)
 {
     struct hash_foreach_arg *arg = (struct hash_foreach_arg *)argp;
     int status;
     st_table *tbl;
 
+    if (error) return ST_STOP;
     tbl = RHASH(arg->hash)->ntbl;
     status = (*arg->func)((VALUE)key, (VALUE)value, arg->arg);
     if (RHASH(arg->hash)->ntbl != tbl) {
@@ -195,6 +208,13 @@ hash_foreach_iter(st_data_t key, st_data_t value, st_data_t argp)
 	return ST_STOP;
     }
     return ST_CHECK;
+}
+
+static VALUE
+hash_foreach_ensure_rollback(VALUE hash)
+{
+    RHASH_ITER_LEV(hash)++;
+    return 0;
 }
 
 static VALUE
@@ -259,8 +279,8 @@ rb_hash_new(void)
     return hash_alloc(rb_cHash);
 }
 
-VALUE
-rb_hash_dup(VALUE hash)
+static VALUE
+rb_hash_dup_empty(VALUE hash)
 {
     NEWOBJ_OF(ret, struct RHash,
                 rb_obj_class(hash),
@@ -268,13 +288,20 @@ rb_hash_dup(VALUE hash)
     if (FL_TEST((hash), FL_EXIVAR))
         rb_copy_generic_ivar((VALUE)(ret),(VALUE)(hash));
 
-    if (!RHASH_EMPTY_P(hash))
-        ret->ntbl = st_copy(RHASH(hash)->ntbl);
     if (FL_TEST(hash, HASH_PROC_DEFAULT)) {
         FL_SET(ret, HASH_PROC_DEFAULT);
     }
     RHASH_SET_IFNONE(ret, RHASH_IFNONE(hash));
     return (VALUE)ret;
+}
+
+VALUE
+rb_hash_dup(VALUE hash)
+{
+    VALUE ret = rb_hash_dup_empty(hash);
+    if (!RHASH_EMPTY_P(hash))
+	RHASH(ret)->ntbl = st_copy(RHASH(hash)->ntbl);
+    return ret;
 }
 
 static void
@@ -325,14 +352,14 @@ struct update_callback_arg {
 };
 
 #define NOINSERT_UPDATE_CALLBACK(func)                                       \
-int                                                                          \
+static int                                                                   \
 func##_noinsert(st_data_t *key, st_data_t *val, st_data_t arg, int existing) \
 {                                                                            \
     if (!existing) no_new_key();                                             \
     return func(key, val, (struct update_arg *)arg, existing);               \
 }                                                                            \
                                                                              \
-int                                                                          \
+static int                                                                   \
 func##_insert(st_data_t *key, st_data_t *val, st_data_t arg, int existing)   \
 {                                                                            \
     return func(key, val, (struct update_arg *)arg, existing);               \
@@ -363,8 +390,8 @@ tbl_update(VALUE hash, VALUE key, int (*func)(st_data_t *key, st_data_t *val, st
     result = st_update(RHASH(hash)->ntbl, (st_data_t)key, func, (st_data_t)&arg);
 
     /* write barrier */
-    if (arg.new_key)   OBJ_WRITTEN(hash, arg.old_key, arg.new_key);
-    if (arg.new_value) OBJ_WRITTEN(hash, arg.old_value, arg.new_value);
+    if (arg.new_key)   RB_OBJ_WRITTEN(hash, arg.old_key, arg.new_key);
+    if (arg.new_value) RB_OBJ_WRITTEN(hash, arg.old_value, arg.new_value);
 
     return result;
 }
@@ -559,6 +586,11 @@ rb_hash_s_try_convert(VALUE dummy, VALUE hash)
     return rb_check_hash_type(hash);
 }
 
+struct rehash_arg {
+    VALUE hash;
+    st_table *tbl;
+};
+
 static int
 rb_hash_rehash_i(VALUE key, VALUE value, VALUE arg)
 {
@@ -591,6 +623,7 @@ rb_hash_rehash_i(VALUE key, VALUE value, VALUE arg)
 static VALUE
 rb_hash_rehash(VALUE hash)
 {
+    VALUE tmp;
     st_table *tbl;
 
     if (RHASH_ITER_LEV(hash) > 0) {
@@ -599,10 +632,14 @@ rb_hash_rehash(VALUE hash)
     rb_hash_modify_check(hash);
     if (!RHASH(hash)->ntbl)
         return hash;
+    tmp = hash_alloc(0);
     tbl = st_init_table_with_size(RHASH(hash)->ntbl->type, RHASH(hash)->ntbl->num_entries);
+    RHASH(tmp)->ntbl = tbl;
+
     rb_hash_foreach(hash, rb_hash_rehash_i, (VALUE)tbl);
     st_free_table(RHASH(hash)->ntbl);
     RHASH(hash)->ntbl = tbl;
+    RHASH(tmp)->ntbl = 0;
 
     return hash;
 }
@@ -1065,21 +1102,71 @@ rb_hash_reject_bang(VALUE hash)
     return hash;
 }
 
+static int
+reject_i(VALUE key, VALUE value, VALUE result)
+{
+    if (!RTEST(rb_yield_values(2, key, value))) {
+	rb_hash_aset(result, key, value);
+    }
+    return ST_CONTINUE;
+}
+
 /*
  *  call-seq:
- *     hsh.reject {| key, value | block }  -> a_hash
- *     hsh.reject                          -> an_enumerator
+ *     hsh.reject {|key, value| block}   -> a_hash
+ *     hsh.reject                        -> an_enumerator
  *
- *  Same as <code>Hash#delete_if</code>, but works on (and returns) a
- *  copy of the <i>hsh</i>. Equivalent to
- *  <code><i>hsh</i>.dup.delete_if</code>.
+ *  Returns a new hash consisting of entries for which the block returns false.
  *
+ *  If no block is given, an enumerator is returned instead.
+ *
+ *     h = { "a" => 100, "b" => 200, "c" => 300 }
+ *     h.reject {|k,v| k < "b"}  #=> {"b" => 200, "c" => 300}
+ *     h.reject {|k,v| v > 100}  #=> {"a" => 100}
  */
 
-static VALUE
+VALUE
 rb_hash_reject(VALUE hash)
 {
-    return rb_hash_delete_if(rb_obj_dup(hash));
+    VALUE result;
+
+    RETURN_SIZED_ENUMERATOR(hash, 0, 0, hash_enum_size);
+    if (RTEST(ruby_verbose)) {
+	VALUE klass;
+	if (HAS_MISC_ATTRIBUTES(hash, klass)) {
+#if HASH_REJECT_COPY_MISC_ATTRIBUTES
+	    rb_warn("copying unguaranteed attributes: %+"PRIsVALUE, hash);
+	    rb_warn("following atributes will not be copied in the future version:");
+	    if (klass != rb_cHash) {
+		rb_warn("  subclass: %+"PRIsVALUE, klass);
+	    }
+	    if (FL_TEST(hash, FL_EXIVAR)) {
+		rb_warn("  instance variables: %+"PRIsVALUE,
+			rb_obj_instance_variables(hash));
+	    }
+	    if (FL_TEST(hash, FL_TAINT)) {
+		rb_warn("  taintedness");
+	    }
+	    if (FL_TEST(hash, HASH_PROC_DEFAULT)) {
+		rb_warn("  default proc: %+"PRIsVALUE, RHASH_IFNONE(hash));
+	    }
+	    else if (!NIL_P(RHASH_IFNONE(hash)))
+		rb_warn("  default value: %+"PRIsVALUE, RHASH_IFNONE(hash));
+#else
+	    rb_warn("unguaranteed attributes are not copied: %+"PRIsVALUE, hash);
+	    rb_warn("following atributes are ignored now:");
+#endif
+	}
+    }
+#if HASH_REJECT_COPY_MISC_ATTRIBUTES
+    result = rb_hash_dup_empty(hash);
+#else
+    result = rb_hash_new();
+#endif
+    if (!RHASH_EMPTY_P(hash)) {
+	rb_hash_foreach(hash, reject_i, result);
+    }
+    return result;
 }
 
 /*
@@ -1108,8 +1195,9 @@ rb_hash_values_at(int argc, VALUE *argv, VALUE hash)
 static int
 select_i(VALUE key, VALUE value, VALUE result)
 {
-    if (RTEST(rb_yield_values(2, key, value)))
+    if (RTEST(rb_yield_values(2, key, value))) {
 	rb_hash_aset(result, key, value);
+    }
     return ST_CONTINUE;
 }
 
@@ -1134,7 +1222,9 @@ rb_hash_select(VALUE hash)
 
     RETURN_SIZED_ENUMERATOR(hash, 0, 0, hash_enum_size);
     result = rb_hash_new();
-    rb_hash_foreach(hash, select_i, result);
+    if (!RHASH_EMPTY_P(hash)) {
+	rb_hash_foreach(hash, select_i, result);
+    }
     return result;
 }
 
@@ -1245,13 +1335,13 @@ static int
 hash_aset_str(st_data_t *key, st_data_t *val, struct update_arg *arg, int existing)
 {
     if (!existing) {
-	*key = rb_str_new_frozen((VALUE)*key);
+	*key = rb_str_new_frozen(*key);
     }
     return hash_aset(key, val, arg, existing);
 }
 
-static NOINSERT_UPDATE_CALLBACK(hash_aset)
-static NOINSERT_UPDATE_CALLBACK(hash_aset_str)
+NOINSERT_UPDATE_CALLBACK(hash_aset);
+NOINSERT_UPDATE_CALLBACK(hash_aset_str);
 
 /*
  *  call-seq:
@@ -1266,6 +1356,7 @@ static NOINSERT_UPDATE_CALLBACK(hash_aset_str)
  *     h["a"] = 9
  *     h["c"] = 4
  *     h   #=> {"a"=>9, "b"=>200, "c"=>4}
+ *     h.store("d", 42) #=> {"a"=>9, "b"=>200, "c"=>4, "d"=>42}
  *
  *  +key+ should not have its value changed while it is in use as a key (an
  *  <tt>unfrozen String</tt> passed as a key will be duplicated and frozen).
@@ -1368,22 +1459,9 @@ rb_hash_replace(VALUE hash, VALUE hash2)
 
     table2 = RHASH(hash2)->ntbl;
 
-    if (RHASH_EMPTY_P(hash2)) {
-	rb_hash_clear(hash);
-	if (table2) hash_tbl(hash)->type = table2->type;
-	return hash;
-    }
-
-    if (RHASH_ITER_LEV(hash) > 0) {
-	rb_hash_clear(hash);
-	hash_tbl(hash)->type = table2->type;
-	rb_hash_foreach(hash2, replace_i, hash);
-    }
-    else {
-	st_table *old_table = RHASH(hash)->ntbl;
-	if (old_table) st_free_table(old_table);
-	RHASH(hash)->ntbl = st_copy(table2);
-    }
+    rb_hash_clear(hash);
+    if (table2) hash_tbl(hash)->type = table2->type;
+    rb_hash_foreach(hash2, replace_i, hash);
 
     return hash;
 }
@@ -1561,7 +1639,7 @@ rb_hash_to_a(VALUE hash)
 {
     VALUE ary;
 
-    ary = rb_ary_new();
+    ary = rb_ary_new_capa(RHASH_SIZE(hash));
     rb_hash_foreach(hash, to_a_i, ary);
     OBJ_INFECT(ary, hash);
 
@@ -1682,12 +1760,26 @@ keys_i(VALUE key, VALUE value, VALUE ary)
 VALUE
 rb_hash_keys(VALUE hash)
 {
-    VALUE ary;
+    VALUE keys;
+    st_index_t size = RHASH_SIZE(hash);
 
-    ary = rb_ary_new_capa(RHASH_SIZE(hash));
-    rb_hash_foreach(hash, keys_i, ary);
+    keys = rb_ary_new_capa(size);
+    if (size == 0) return keys;
 
-    return ary;
+    if (ST_DATA_COMPATIBLE_P(VALUE)) {
+	st_table *table = RHASH(hash)->ntbl;
+
+	if (OBJ_PROMOTED(keys)) rb_gc_writebarrier_remember_promoted(keys);
+	RARRAY_PTR_USE(keys, ptr, {
+	    size = st_keys_check(table, ptr, size, Qundef);
+	});
+	rb_ary_set_len(keys, size);
+    }
+    else {
+	rb_hash_foreach(hash, keys_i, keys);
+    }
+
+    return keys;
 }
 
 static int
@@ -1712,12 +1804,26 @@ values_i(VALUE key, VALUE value, VALUE ary)
 VALUE
 rb_hash_values(VALUE hash)
 {
-    VALUE ary;
+    VALUE values;
+    st_index_t size = RHASH_SIZE(hash);
 
-    ary = rb_ary_new_capa(RHASH_SIZE(hash));
-    rb_hash_foreach(hash, values_i, ary);
+    values = rb_ary_new_capa(size);
+    if (size == 0) return values;
 
-    return ary;
+    if (ST_DATA_COMPATIBLE_P(VALUE)) {
+	st_table *table = RHASH(hash)->ntbl;
+
+	if (OBJ_PROMOTED(values)) rb_gc_writebarrier_remember_promoted(values);
+	RARRAY_PTR_USE(values, ptr, {
+	    size = st_values_check(table, ptr, size, Qundef);
+	});
+	rb_ary_set_len(values, size);
+    }
+    else {
+	rb_hash_foreach(hash, values_i, values);
+    }
+
+    return values;
 }
 
 /*
@@ -1901,20 +2007,6 @@ hash_i(VALUE key, VALUE val, VALUE arg)
     return ST_CONTINUE;
 }
 
-static VALUE
-recursive_hash(VALUE hash, VALUE dummy, int recur)
-{
-    st_index_t hval = RHASH_SIZE(hash);
-
-    if (!hval) return INT2FIX(0);
-    if (recur)
-	hval = rb_hash_uint(rb_hash_start(rb_hash(rb_cHash)), hval);
-    else
-	rb_hash_foreach(hash, hash_i, (VALUE)&hval);
-    hval = rb_hash_end(hval);
-    return INT2FIX(hval);
-}
-
 /*
  *  call-seq:
  *     hsh.hash   -> fixnum
@@ -1926,7 +2018,14 @@ recursive_hash(VALUE hash, VALUE dummy, int recur)
 static VALUE
 rb_hash_hash(VALUE hash)
 {
-    return rb_exec_recursive_outer(recursive_hash, hash, 0);
+    st_index_t size = RHASH_SIZE(hash);
+    st_index_t hval = rb_hash_start(size);
+    hval = rb_hash_uint(hval, (st_index_t)rb_hash_hash);
+    if (size) {
+	rb_hash_foreach(hash, hash_i, (VALUE)&hval);
+    }
+    hval = rb_hash_end(hval);
+    return INT2FIX(hval);
 }
 
 static int
@@ -1972,7 +2071,7 @@ rb_hash_update_callback(st_data_t *key, st_data_t *value, struct update_arg *arg
     return ST_CONTINUE;
 }
 
-static NOINSERT_UPDATE_CALLBACK(rb_hash_update_callback)
+NOINSERT_UPDATE_CALLBACK(rb_hash_update_callback);
 
 static int
 rb_hash_update_i(VALUE key, VALUE value, VALUE hash)
@@ -1999,7 +2098,7 @@ rb_hash_update_block_callback(st_data_t *key, st_data_t *value, struct update_ar
     return ST_CONTINUE;
 }
 
-static NOINSERT_UPDATE_CALLBACK(rb_hash_update_block_callback)
+NOINSERT_UPDATE_CALLBACK(rb_hash_update_block_callback);
 
 static int
 rb_hash_update_block_i(VALUE key, VALUE value, VALUE hash)
@@ -2070,7 +2169,7 @@ rb_hash_update_func_callback(st_data_t *key, st_data_t *value, struct update_arg
     return ST_CONTINUE;
 }
 
-static NOINSERT_UPDATE_CALLBACK(rb_hash_update_func_callback)
+NOINSERT_UPDATE_CALLBACK(rb_hash_update_func_callback);
 
 static int
 rb_hash_update_func_i(VALUE key, VALUE value, VALUE arg0)
@@ -2350,7 +2449,18 @@ static char **my_environ;
 #undef environ
 #define environ my_environ
 #undef getenv
-#define getenv(n) rb_w32_ugetenv(n)
+static inline char *
+w32_getenv(const char *name)
+{
+    static int binary = -1;
+    static int locale = -1;
+    if (binary < 0) {
+	binary = rb_ascii8bit_encindex();
+	locale = rb_locale_encindex();
+    }
+    return locale == binary ? rb_w32_getenv(name) : rb_w32_ugetenv(name);
+}
+#define getenv(n) w32_getenv(n)
 #elif defined(__APPLE__)
 #undef environ
 #define environ (*_NSGetEnviron())
@@ -3761,4 +3871,7 @@ Init_Hash(void)
      * See ENV (the class) for more details.
      */
     rb_define_global_const("ENV", envtbl);
+
+    /* for callcc */
+    ruby_register_rollback_func_for_ensure(hash_foreach_ensure, hash_foreach_ensure_rollback);
 }

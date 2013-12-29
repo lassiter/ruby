@@ -160,7 +160,7 @@ typedef struct rb_call_info_struct {
     rb_iseq_t *blockiseq;
 
     /* inline cache: keys */
-    rb_serial_t method_serial;
+    rb_serial_t method_state;
     rb_serial_t class_serial;
     VALUE klass;
 
@@ -387,6 +387,9 @@ typedef struct rb_vm_struct {
     /* hook */
     rb_hook_list_t event_hooks;
 
+    /* relation table of ensure - rollback for callcc */
+    struct st_table *ensure_rollback_table;
+
     /* postponed_job */
     struct rb_postponed_job_struct *postponed_job_buffer;
     int postponed_job_index;
@@ -507,6 +510,17 @@ typedef struct rb_thread_list_struct{
 } rb_thread_list_t;
 
 
+typedef struct rb_ensure_entry {
+    VALUE marker;
+    VALUE (*e_proc)(ANYARGS);
+    VALUE data2;
+} rb_ensure_entry_t;
+
+typedef struct rb_ensure_list {
+    struct rb_ensure_list *next;
+    struct rb_ensure_entry entry;
+} rb_ensure_list_t;
+
 typedef struct rb_thread_struct {
     VALUE self;
     rb_vm_t *vm;
@@ -625,6 +639,9 @@ typedef struct rb_thread_struct {
     VALUE fiber;
     VALUE root_fiber;
     rb_jmpbuf_t root_jmpbuf;
+
+    /* ensure & callcc */
+    rb_ensure_list_t *ensure_list;
 
     /* misc */
     int method_missing_reason;
@@ -823,7 +840,7 @@ VALUE rb_proc_alloc(VALUE klass);
 
 /* for debug */
 extern void rb_vmdebug_stack_dump_raw(rb_thread_t *, rb_control_frame_t *);
-extern void rb_vmdebug_debug_print_pre(rb_thread_t *th, rb_control_frame_t *cfp);
+extern void rb_vmdebug_debug_print_pre(rb_thread_t *th, rb_control_frame_t *cfp, VALUE *_pc);
 extern void rb_vmdebug_debug_print_post(rb_thread_t *th, rb_control_frame_t *cfp);
 
 #define SDR() rb_vmdebug_stack_dump_raw(GET_THREAD(), GET_THREAD()->cfp)
@@ -872,13 +889,17 @@ int rb_autoloading_value(VALUE mod, ID id, VALUE* value);
 
 #define sysstack_error GET_VM()->special_exceptions[ruby_error_sysstack]
 
-#define CHECK_VM_STACK_OVERFLOW0(cfp, sp, margin) do { \
-    if ((VALUE *)((char *)((VALUE *)(sp) + (margin)) + sizeof(rb_control_frame_t)) >= ((VALUE *)(cfp))) { \
-	vm_stackoverflow(); \
-    } \
-} while (0)
-
-#define CHECK_VM_STACK_OVERFLOW(cfp, margin) CHECK_VM_STACK_OVERFLOW0((cfp), (cfp)->sp, margin)
+#define RUBY_CONST_ASSERT(expr) (1/!!(expr)) /* expr must be a compile-time constant */
+#define VM_STACK_OVERFLOWED_P(cfp, sp, margin) \
+    (!RUBY_CONST_ASSERT(sizeof(*(sp)) == sizeof(VALUE)) || \
+     !RUBY_CONST_ASSERT(sizeof(*(cfp)) == sizeof(rb_control_frame_t)) || \
+     ((rb_control_frame_t *)((sp) + (margin)) + 1) >= (cfp))
+#define WHEN_VM_STACK_OVERFLOWED(cfp, sp, margin) \
+    if (LIKELY(!VM_STACK_OVERFLOWED_P(cfp, sp, margin))) {(void)0;} else /* overflowed */
+#define CHECK_VM_STACK_OVERFLOW0(cfp, sp, margin) \
+    WHEN_VM_STACK_OVERFLOWED(cfp, sp, margin) vm_stackoverflow()
+#define CHECK_VM_STACK_OVERFLOW(cfp, margin) \
+    WHEN_VM_STACK_OVERFLOWED(cfp, (cfp)->sp, margin) vm_stackoverflow()
 
 /* for thread */
 

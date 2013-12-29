@@ -71,8 +71,8 @@ static VALUE
 vm_invoke_proc(rb_thread_t *th, rb_proc_t *proc, VALUE self, VALUE defined_class,
 	       int argc, const VALUE *argv, const rb_block_t *blockptr);
 
-static rb_serial_t ruby_vm_method_serial = 1;
-static rb_serial_t ruby_vm_constant_serial = 1;
+static rb_serial_t ruby_vm_global_method_state = 1;
+static rb_serial_t ruby_vm_global_constant_state = 1;
 static rb_serial_t ruby_vm_class_serial = 1;
 
 #include "vm_insnhelper.h"
@@ -111,6 +111,71 @@ void
 rb_vm_inc_const_missing_count(void)
 {
     ruby_vm_const_missing_count +=1;
+}
+
+/*
+ *  call-seq:
+ *    RubyVM.stat -> Hash
+ *    RubyVM.stat(hsh) -> hsh
+ *    RubyVM.stat(Symbol) -> Numeric
+ *
+ *  Returns a Hash containing implementation-dependent counters inside the VM.
+ *
+ *  This hash includes information about method/constant cache serials:
+ *
+ *    {
+ *      :global_method_state=>251,
+ *      :global_constant_state=>481,
+ *      :class_serial=>9029
+ *    }
+ *
+ *  The contents of the hash are implementation specific and may be changed in
+ *  the future.
+ *
+ *  This method is only expected to work on C Ruby.
+ */
+
+static VALUE
+vm_stat(int argc, VALUE *argv, VALUE self)
+{
+    static VALUE sym_global_method_state, sym_global_constant_state, sym_class_serial;
+    VALUE arg = Qnil;
+    VALUE hash = Qnil, key = Qnil;
+
+    if (rb_scan_args(argc, argv, "01", &arg) == 1) {
+	if (SYMBOL_P(arg))
+	    key = arg;
+	else if (RB_TYPE_P(arg, T_HASH))
+	    hash = arg;
+	else
+	    rb_raise(rb_eTypeError, "non-hash or symbol given");
+    } else if (arg == Qnil) {
+	hash = rb_hash_new();
+    }
+
+    if (sym_global_method_state == 0) {
+#define S(s) sym_##s = ID2SYM(rb_intern_const(#s))
+	S(global_method_state);
+	S(global_constant_state);
+	S(class_serial);
+#undef S
+    }
+
+#define SET(name, attr) \
+    if (key == sym_##name) \
+	return SERIALT2NUM(attr); \
+    else if (hash != Qnil) \
+	rb_hash_aset(hash, sym_##name, SERIALT2NUM(attr));
+
+    SET(global_method_state, ruby_vm_global_method_state);
+    SET(global_constant_state, ruby_vm_global_constant_state);
+    SET(class_serial, ruby_vm_class_serial);
+#undef SET
+
+    if (key != Qnil) /* matched key should return above */
+	rb_raise(rb_eArgError, "unknown key: %s", RSTRING_PTR(rb_id2str(SYM2ID(key))));
+
+    return hash;
 }
 
 /* control stack frame */
@@ -699,6 +764,14 @@ vm_yield(rb_thread_t *th, int argc, const VALUE *argv)
 			       blockptr->klass);
 }
 
+static inline VALUE
+vm_yield_with_block(rb_thread_t *th, int argc, const VALUE *argv, const rb_block_t *blockargptr)
+{
+    const rb_block_t *blockptr = check_block(th);
+    return invoke_block_from_c(th, blockptr, blockptr->self, argc, argv, blockargptr, 0,
+			       blockptr->klass);
+}
+
 static VALUE
 vm_invoke_proc(rb_thread_t *th, rb_proc_t *proc, VALUE self, VALUE defined_class,
 	       int argc, const VALUE *argv, const rb_block_t *blockptr)
@@ -854,6 +927,15 @@ rb_vm_cref(void)
     if (cfp == 0) {
 	return NULL;
     }
+    return rb_vm_get_cref(cfp->iseq, cfp->ep);
+}
+
+NODE *
+rb_vm_cref_in_context(VALUE self)
+{
+    rb_thread_t *th = GET_THREAD();
+    const rb_control_frame_t *cfp = rb_vm_get_ruby_level_next_cfp(th, th->cfp);
+    if (cfp->self != self) return NULL;
     return rb_vm_get_cref(cfp->iseq, cfp->ep);
 }
 
@@ -1604,9 +1686,6 @@ rb_vm_mark(void *ptr)
 	if (vm->loading_table) {
 	    rb_mark_tbl(vm->loading_table);
 	}
-	if (vm->loaded_features_index) {
-	    rb_mark_tbl(vm->loaded_features_index);
-	}
 
 	rb_vm_trace_mark_event_hooks(&vm->event_hooks);
 
@@ -1654,14 +1733,15 @@ ruby_vm_destruct(rb_vm_t *vm)
 	    st_free_table(vm->living_threads);
 	    vm->living_threads = 0;
 	}
+	ruby_vm_run_at_exit_hooks(vm);
+	rb_vm_gvl_destroy(vm);
 #if defined(ENABLE_VM_OBJSPACE) && ENABLE_VM_OBJSPACE
 	if (objspace) {
 	    rb_objspace_free(objspace);
 	}
 #endif
-	ruby_vm_run_at_exit_hooks(vm);
-	rb_vm_gvl_destroy(vm);
-	ruby_xfree(vm);
+	/* after freeing objspace, you *can't* use ruby_xfree() */
+	ruby_mimfree(vm);
 	ruby_current_vm = 0;
     }
     RUBY_FREE_LEAVE("vm");
@@ -2079,15 +2159,13 @@ vm_define_method(rb_thread_t *th, VALUE obj, ID id, VALUE iseqval,
     /* dup */
     COPY_CREF(miseq->cref_stack, cref);
     miseq->cref_stack->nd_visi = NOEX_PUBLIC;
-    OBJ_WRITE(miseq->self, &miseq->klass, klass);
+    RB_OBJ_WRITE(miseq->self, &miseq->klass, klass);
     miseq->defined_method_id = id;
     rb_add_method(klass, id, VM_METHOD_TYPE_ISEQ, miseq, noex);
-    rb_clear_method_cache_by_class(klass);
 
     if (!is_singleton && noex == NOEX_MODFUNC) {
 	klass = rb_singleton_class(klass);
 	rb_add_method(klass, id, VM_METHOD_TYPE_ISEQ, miseq, NOEX_PUBLIC);
-	rb_clear_method_cache_by_class(klass);
     }
 }
 
@@ -2137,7 +2215,6 @@ m_core_undef_method(VALUE self, VALUE cbase, VALUE sym)
 {
     REWIND_CFP({
 	rb_undef(cbase, SYM2ID(sym));
-	rb_clear_method_cache_by_class(cbase);
 	rb_clear_method_cache_by_class(self);
     });
     return Qnil;
@@ -2206,8 +2283,8 @@ static int
 kwmerge_i(VALUE key, VALUE value, VALUE hash)
 {
     if (!SYMBOL_P(key)) Check_Type(key, T_SYMBOL);
-    if (st_update(RHASH_TBL(hash), key, kwmerge_ii, (st_data_t)value) == 0) { /* !existing */
-	OBJ_WRITTEN(hash, Qundef, value);
+    if (st_update(RHASH_TBL_RAW(hash), key, kwmerge_ii, (st_data_t)value) == 0) { /* !existing */
+	RB_OBJ_WRITTEN(hash, Qundef, value);
     }
     return ST_CONTINUE;
 }
@@ -2289,6 +2366,7 @@ Init_VM(void)
     rb_cRubyVM = rb_define_class("RubyVM", rb_cObject);
     rb_undef_alloc_func(rb_cRubyVM);
     rb_undef_method(CLASS_OF(rb_cRubyVM), "new");
+    rb_define_singleton_method(rb_cRubyVM, "stat", vm_stat, -1);
 
     /* FrozenCore (hidden) */
     fcore = rb_class_new(rb_cBasicObject);
@@ -2578,7 +2656,7 @@ rb_vm_set_progname(VALUE filename)
     rb_thread_t *th = GET_VM()->main_thread;
     rb_control_frame_t *cfp = (void *)(th->stack + th->stack_size);
     --cfp;
-    OBJ_WRITE(cfp->iseq->self, &cfp->iseq->location.path, filename);
+    RB_OBJ_WRITE(cfp->iseq->self, &cfp->iseq->location.path, filename);
 }
 
 #if defined(ENABLE_VM_OBJSPACE) && ENABLE_VM_OBJSPACE
@@ -2669,7 +2747,7 @@ VALUE rb_insn_operand_intern(rb_iseq_t *iseq,
 
 #if VM_COLLECT_USAGE_DETAILS
 
-#define HASH_ASET(h, k, v) st_insert(RHASH_TBL(h), (st_data_t)(k), (st_data_t)(v))
+#define HASH_ASET(h, k, v) rb_hash_aset((h), (st_data_t)(k), (st_data_t)(v))
 
 /* uh = {
  *   insn(Fixnum) => ihash(Hash)

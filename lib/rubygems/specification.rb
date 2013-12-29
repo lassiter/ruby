@@ -12,6 +12,7 @@ require 'rubygems/platform'
 require 'rubygems/deprecate'
 require 'rubygems/basic_specification'
 require 'rubygems/stub_specification'
+require 'rubygems/util/stringio'
 
 # :stopdoc:
 # date.rb can't be loaded for `make install` due to miniruby
@@ -26,6 +27,7 @@ class Date; end
 #   Gem::Specification.new do |s|
 #     s.name        = 'example'
 #     s.version     = '0.1.0'
+#     s.licenses    = ['MIT']
 #     s.summary     = "This is an example!"
 #     s.description = "Much longer explanation of the example!"
 #     s.authors     = ["Ruby Coder"]
@@ -529,6 +531,7 @@ class Gem::Specification < Gem::BasicSpecification
   end
 
   ##
+  # :category: Recommended gemspec attributes
   # The license for this gem.
   #
   # The license must be a short name, no more than 64 characters.
@@ -537,7 +540,12 @@ class Gem::Specification < Gem::BasicSpecification
   # text of the license should be inside of the gem when you build it.
   #
   # See http://opensource.org/licenses/alphabetical for a list of licenses and
-  # their abbreviations (or short names).
+  # their abbreviations (or short names).  GitHub also provides a
+  # license picker at http://choosealicense.com/
+  #
+  #  According to copyright law, not having an OSI-approved open source license
+  #  means you have no rights to use the code for any purpose-- in other words,
+  #  "all rights reserved".
   #
   # You can set multiple licenses with #licenses=
   #
@@ -549,6 +557,7 @@ class Gem::Specification < Gem::BasicSpecification
   end
 
   ##
+  # :category: Recommended gemspec attributes
   # The license(s) for the library.
   #
   # Each license must be a short name, no more than 64 characters.
@@ -1022,7 +1031,7 @@ class Gem::Specification < Gem::BasicSpecification
       spec = eval code, binding, file
 
       if Gem::Specification === spec
-        spec.loaded_from = file.to_s
+        spec.loaded_from = File.expand_path file.to_s
         LOAD_CACHE[file] = spec
         return spec
       end
@@ -1266,7 +1275,7 @@ class Gem::Specification < Gem::BasicSpecification
 
   ##
   # Activate all unambiguously resolved runtime dependencies of this
-  # spec. Add any ambigous dependencies to the unresolved list to be
+  # spec. Add any ambiguous dependencies to the unresolved list to be
   # resolved later, as needed.
 
   def activate_dependencies
@@ -1600,7 +1609,7 @@ class Gem::Specification < Gem::BasicSpecification
 
   ##
   # Returns the full path to this spec's documentation directory.  If +type+
-  # is given it will be appended to the end.  For examlpe:
+  # is given it will be appended to the end.  For example:
   #
   #   spec.doc_dir      # => "/path/to/gem_repo/doc/a-1"
   #
@@ -1735,7 +1744,7 @@ class Gem::Specification < Gem::BasicSpecification
   # directory.
 
   def gem_build_complete_path # :nodoc:
-    File.join extension_install_dir, 'gem.build_complete'
+    File.join extension_dir, 'gem.build_complete'
   end
 
   ##
@@ -1907,7 +1916,6 @@ class Gem::Specification < Gem::BasicSpecification
     @cache_dir     = nil
     @cache_file    = nil
     @doc_dir       = nil
-    @gem_dir       = nil
     @ri_dir        = nil
     @spec_dir      = nil
     @spec_file     = nil
@@ -2165,10 +2173,10 @@ class Gem::Specification < Gem::BasicSpecification
   end
 
   ##
-  # Used by Gem::DependencyResolver to order Gem::Specification objects
+  # Used by Gem::Resolver to order Gem::Specification objects
 
   def source # :nodoc:
-    self
+    Gem::Source::Installed.new
   end
 
   ##
@@ -2363,7 +2371,7 @@ class Gem::Specification < Gem::BasicSpecification
       builder << self
       ast = builder.tree
 
-      io = StringIO.new
+      io = Gem::StringSink.new
       io.set_encoding Encoding::UTF_8 if Object.const_defined? :Encoding
 
       Psych::Visitors::Emitter.new(io).accept(ast)
@@ -2525,8 +2533,8 @@ class Gem::Specification < Gem::BasicSpecification
     }
 
     warning <<-warning if licenses.empty?
-licenses is empty.  Use a license abbreviation from:
-  http://opensource.org/licenses/alphabetical
+licenses is empty, but is recommended.  Use a license abbreviation from:
+http://opensource.org/licenses/alphabetical
     warning
 
     validate_permissions

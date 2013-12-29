@@ -81,7 +81,7 @@ newobj_i(VALUE tpval, void *data)
     VALUE klass = rb_tracearg_defined_class(tparg);
     struct allocation_info *info;
     const char *path_cstr = RTEST(path) ? make_unique_str(arg->str_table, RSTRING_PTR(path), RSTRING_LEN(path)) : 0;
-    VALUE class_path = RTEST(klass) ? rb_class_path(klass) : Qnil;
+    VALUE class_path = (RTEST(klass) && !OBJ_FROZEN(klass)) ? rb_class_path_cached(klass) : Qnil;
     const char *class_path_cstr = RTEST(class_path) ? make_unique_str(arg->str_table, RSTRING_PTR(class_path), RSTRING_LEN(class_path)) : 0;
 
     if (st_lookup(arg->object_table, (st_data_t)obj, (st_data_t *)&info)) {
@@ -274,7 +274,7 @@ trace_object_allocations(VALUE self)
 }
 
 int rb_bug_reporter_add(void (*func)(FILE *, void *), void *data);
-static int object_allocations_reporter_registerd = 0;
+static int object_allocations_reporter_registered = 0;
 
 static int
 object_allocations_reporter_i(st_data_t key, st_data_t val, st_data_t ptr)
@@ -307,8 +307,8 @@ static VALUE
 trace_object_allocations_debug_start(VALUE self)
 {
     tmp_keep_remains = 1;
-    if (object_allocations_reporter_registerd == 0) {
-	object_allocations_reporter_registerd = 1;
+    if (object_allocations_reporter_registered == 0) {
+	object_allocations_reporter_registered = 1;
 	rb_bug_reporter_add(object_allocations_reporter, 0);
     }
 

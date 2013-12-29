@@ -114,7 +114,7 @@ VALUE rb_cSymbol;
 } while (0)
 
 #define STR_SET_SHARED(str, shared_str) do { \
-    OBJ_WRITE((str), &RSTRING(str)->as.heap.aux.shared, (shared_str)); \
+    RB_OBJ_WRITE((str), &RSTRING(str)->as.heap.aux.shared, (shared_str)); \
     FL_SET((str), ELTS_SHARED); \
 } while (0)
 
@@ -132,22 +132,54 @@ static const struct st_hash_type fstring_hash_type = {
     rb_str_hash,
 };
 
-VALUE
-rb_fstring(VALUE str)
+static int
+fstr_update_callback(st_data_t *key, st_data_t *value, st_data_t arg, int existing)
 {
-    st_data_t fstr;
-    if (st_lookup(frozen_strings, (st_data_t)str, &fstr)) {
-	str = (VALUE)fstr;
-	/* because of lazy sweep, str may be unmaked already and swept
+    VALUE *fstr = (VALUE *)arg;
+    VALUE str = (VALUE)*key;
+
+    if (existing) {
+	/* because of lazy sweep, str may be unmarked already and swept
 	 * at next time */
-	rb_gc_mark(str);
+	rb_gc_resurrect(*fstr = *key);
+	return ST_STOP;
+    }
+
+    if (STR_SHARED_P(str)) {
+	/* str should not be shared */
+	str = rb_enc_str_new(RSTRING_PTR(str), RSTRING_LEN(str), STR_ENC_GET(str));
+	OBJ_FREEZE(str);
     }
     else {
 	str = rb_str_new_frozen(str);
-	RBASIC(str)->flags |= RSTRING_FSTR;
-	st_insert(frozen_strings, str, str);
     }
-    return str;
+    RBASIC(str)->flags |= RSTRING_FSTR;
+
+    *key = *value = *fstr = str;
+    return ST_CONTINUE;
+}
+
+VALUE
+rb_fstring(VALUE str)
+{
+    VALUE fstr = Qnil;
+    Check_Type(str, T_STRING);
+
+    if (!frozen_strings)
+	frozen_strings = st_init_table(&fstring_hash_type);
+
+    if (FL_TEST(str, RSTRING_FSTR))
+	return str;
+
+    st_update(frozen_strings, (st_data_t)str, fstr_update_callback, (st_data_t)&fstr);
+    return fstr;
+}
+
+static int
+fstring_set_class_i(st_data_t key, st_data_t val, st_data_t arg)
+{
+    RBASIC_SET_CLASS((VALUE)key, (VALUE)arg);
+    return ST_CONTINUE;
 }
 
 static int
@@ -749,6 +781,9 @@ str_new4(VALUE klass, VALUE str)
 	STR_SET_SHARED(str2, shared); /* TODO: WB is not needed because str2 is *new* object */
     }
     else {
+	if (!STR_ASSOC_P(str)) {
+	    RSTRING(str2)->as.heap.aux.capa = RSTRING(str)->as.heap.aux.capa;
+	}
 	STR_SET_SHARED(str, str2);
     }
     rb_enc_cr_str_exact_copy(str2, str);
@@ -787,7 +822,7 @@ rb_str_new_frozen(VALUE orig)
 	FL_UNSET(orig, STR_ASSOC);
 	str = str_new4(klass, orig);
 	FL_SET(str, STR_ASSOC);
-	OBJ_WRITE(str, &RSTRING(str)->as.heap.aux.shared, assoc);
+	RB_OBJ_WRITE(str, &RSTRING(str)->as.heap.aux.shared, assoc);
 	/* TODO: WB is not needed because str is new object */
     }
     else {
@@ -879,7 +914,7 @@ rb_str_free(VALUE str)
 RUBY_FUNC_EXPORTED size_t
 rb_str_memsize(VALUE str)
 {
-    if (!STR_EMBED_P(str) && !STR_SHARED_P(str)) {
+    if (FL_TEST(str, STR_NOEMBED|ELTS_SHARED) == STR_NOEMBED) {
 	return STR_HEAP_SIZE(str);
     }
     else {
@@ -920,7 +955,7 @@ rb_str_shared_replace(VALUE str, VALUE str2)
     if (STR_NOCAPA_P(str2)) {
 	VALUE shared = RSTRING(str2)->as.heap.aux.shared;
 	FL_SET(str, RBASIC(str2)->flags & STR_NOCAPA);
-	OBJ_WRITE(str, &RSTRING(str)->as.heap.aux.shared, shared);
+	RB_OBJ_WRITE(str, &RSTRING(str)->as.heap.aux.shared, shared);
     }
     else {
 	RSTRING(str)->as.heap.aux.capa = RSTRING(str2)->as.heap.aux.capa;
@@ -1488,7 +1523,7 @@ rb_str_associate(VALUE str, VALUE add)
 	}
 	FL_SET(str, STR_ASSOC);
 	RBASIC_CLEAR_CLASS(add);
-	OBJ_WRITE(str, &RSTRING(str)->as.heap.aux.shared, add);
+	RB_OBJ_WRITE(str, &RSTRING(str)->as.heap.aux.shared, add);
     }
 }
 
@@ -1973,13 +2008,12 @@ rb_str_resize(VALUE str, long len)
 	}
 	else if (len + termlen <= RSTRING_EMBED_LEN_MAX + 1) {
 	    char *ptr = STR_HEAP_PTR(str);
-	    size_t size = STR_HEAP_SIZE(str);
 	    STR_SET_EMBED(str);
 	    if (slen > len) slen = len;
 	    if (slen > 0) MEMCPY(RSTRING(str)->as.ary, ptr, char, slen);
 	    TERM_FILL(RSTRING(str)->as.ary + len, termlen);
 	    STR_SET_EMBED_LEN(str, len);
-	    if (independent) ruby_sized_xfree(ptr, size);
+	    if (independent) ruby_xfree(ptr);
 	    return str;
 	}
 	else if (!independent) {
@@ -5710,7 +5744,7 @@ tr_setup_table(VALUE str, char stable[TR_TABLE_SIZE], int first,
 
 
 static int
-tr_find(unsigned int c, char table[TR_TABLE_SIZE], VALUE del, VALUE nodel)
+tr_find(unsigned int c, const char table[TR_TABLE_SIZE], VALUE del, VALUE nodel)
 {
     if (c < 256) {
 	return table[c] != 0;
@@ -7959,6 +7993,7 @@ str_compat_and_valid(VALUE str, rb_encoding *enc)
 }
 
 /**
+ * @param str the string to be scrubbed
  * @param repl the replacement character
  * @return If given string is invalid, returns a new string. Otherwise, returns Qnil.
  */
@@ -8693,8 +8728,6 @@ Init_String(void)
 #undef rb_intern
 #define rb_intern(str) rb_intern_const(str)
 
-    frozen_strings = st_init_table(&fstring_hash_type);
-
     rb_cString  = rb_define_class("String", rb_cObject);
     rb_include_module(rb_cString, rb_mComparable);
     rb_define_alloc_func(rb_cString, empty_str_alloc);
@@ -8866,4 +8899,7 @@ Init_String(void)
     rb_define_method(rb_cSymbol, "swapcase", sym_swapcase, 0);
 
     rb_define_method(rb_cSymbol, "encoding", sym_encoding, 0);
+
+    if (frozen_strings)
+	st_foreach(frozen_strings, fstring_set_class_i, rb_cString);
 }

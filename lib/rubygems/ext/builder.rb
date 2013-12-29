@@ -98,7 +98,7 @@ class Gem::Ext::Builder
   def initialize spec, build_args = spec.build_args
     @spec       = spec
     @build_args = build_args
-    @gem_dir    = spec.gem_dir
+    @gem_dir    = spec.full_gem_path
 
     @ran_rake   = nil
   end
@@ -149,6 +149,7 @@ EOF
     extension ||= '' # I wish I knew why this line existed
     extension_dir =
       File.expand_path File.join @gem_dir, File.dirname(extension)
+    lib_dir = File.join @spec.full_gem_path, @spec.raw_require_paths.first
 
     builder = builder_for extension
 
@@ -158,7 +159,7 @@ EOF
       CHDIR_MUTEX.synchronize do
         Dir.chdir extension_dir do
           results = builder.build(extension, @gem_dir, dest_path,
-                                  results, @build_args)
+                                  results, @build_args, lib_dir)
 
           say results.join("\n") if Gem.configuration.really_verbose
         end
@@ -185,7 +186,7 @@ EOF
       say "This could take a while..."
     end
 
-    dest_path = @spec.extension_install_dir
+    dest_path = @spec.extension_dir
 
     FileUtils.rm_f @spec.gem_build_complete_path
 
@@ -204,9 +205,9 @@ EOF
   # Writes +output+ to gem_make.out in the extension install directory.
 
   def write_gem_make_out output # :nodoc:
-    destination = File.join @spec.extension_install_dir, 'gem_make.out'
+    destination = File.join @spec.extension_dir, 'gem_make.out'
 
-    FileUtils.mkdir_p @spec.extension_install_dir
+    FileUtils.mkdir_p @spec.extension_dir
 
     open destination, 'wb' do |io| io.puts output end
 

@@ -627,7 +627,7 @@ rb_get_next_signal(void)
 }
 
 
-#ifdef USE_SIGALTSTACK
+#if defined(USE_SIGALTSTACK) || defined(_WIN32)
 static void
 check_stack_overflow(const void *addr)
 {
@@ -638,9 +638,18 @@ check_stack_overflow(const void *addr)
 	ruby_thread_stack_overflow(th);
     }
 }
-#define CHECK_STACK_OVERFLOW() check_stack_overflow(info->si_addr)
+#ifdef _WIN32
+#define CHECK_STACK_OVERFLOW() check_stack_overflow(0)
+#else
+#define FAULT_ADDRESS info->si_addr
+#define CHECK_STACK_OVERFLOW() check_stack_overflow(FAULT_ADDRESS)
+#define MESSAGE_FAULT_ADDRESS " at %p", FAULT_ADDRESS
+#endif
 #else
 #define CHECK_STACK_OVERFLOW() (void)0
+#endif
+#ifndef MESSAGE_FAULT_ADDRESS
+#define MESSAGE_FAULT_ADDRESS
 #endif
 
 #ifdef SIGBUS
@@ -655,7 +664,7 @@ sigbus(int sig SIGINFO_ARG)
 #if defined __APPLE__
     CHECK_STACK_OVERFLOW();
 #endif
-    rb_bug("Bus Error");
+    rb_bug("Bus Error" MESSAGE_FAULT_ADDRESS);
 }
 #endif
 
@@ -692,7 +701,7 @@ sigsegv(int sig SIGINFO_ARG)
 
     segv_received = 1;
     ruby_disable_gc_stress = 1;
-    rb_bug("Segmentation fault");
+    rb_bug("Segmentation fault" MESSAGE_FAULT_ADDRESS);
 }
 #endif
 

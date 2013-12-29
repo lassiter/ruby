@@ -27,7 +27,7 @@ typedef rb_iseq_t *ISEQ;
 #if VMDEBUG > 0
 #define debugs printf
 #define DEBUG_ENTER_INSN(insn) \
-  rb_vmdebug_debug_print_pre(th, GET_CFP());
+    rb_vmdebug_debug_print_pre(th, GET_CFP(),GET_PC());
 
 #if OPT_STACK_CACHING
 #define SC_REGS() , reg_a, reg_b
@@ -169,12 +169,14 @@ default:                        \
 #endif
 
 #define SCREG(r) (reg_##r)
-#define CHECK_VM_STACK_OVERFLOW_FOR_INSN(cfp, margin) do { \
-    if (((rb_control_frame_t *)(((cfp)->sp) + (margin)) + 1) >= (cfp)) { \
-	rb_bug("CHECK_VM_STACK_OVERFLOW_FOR_INSN: should not overflow here. " \
-	       "Please contact ruby-core/dev with your (a part of) script. " \
-	       "This check will be removed soon."); \
-    } \
-} while (0)
+
+#define VM_DEBUG_STACKOVERFLOW 0
+
+#if VM_DEBUG_STACKOVERFLOW
+#define CHECK_VM_STACK_OVERFLOW_FOR_INSN(cfp, margin) \
+    WHEN_VM_STACK_OVERFLOWED(cfp, (cfp)->sp, margin) vm_stack_overflow_for_insn()
+#else
+#define CHECK_VM_STACK_OVERFLOW_FOR_INSN(cfp, margin)
+#endif
 
 #endif /* RUBY_VM_EXEC_H */

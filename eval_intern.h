@@ -83,9 +83,28 @@ extern int select_large_fdset(int, fd_set *, fd_set *, fd_set *, struct timeval 
 
 #include <sys/stat.h>
 
+#ifdef _MSC_VER
+#define SAVE_ROOT_JMPBUF_BEFORE_STMT \
+    __try {
+#define SAVE_ROOT_JMPBUF_AFTER_STMT \
+    } \
+    __except (GetExceptionCode() == EXCEPTION_STACK_OVERFLOW ? \
+	      (rb_thread_raised_set(GET_THREAD(), RAISED_STACKOVERFLOW), \
+	       raise(SIGSEGV), \
+	       EXCEPTION_EXECUTE_HANDLER) : \
+	      EXCEPTION_CONTINUE_SEARCH) { \
+	/* never reaches here */ \
+    }
+#else
+#define SAVE_ROOT_JMPBUF_BEFORE_STMT
+#define SAVE_ROOT_JMPBUF_AFTER_STMT
+#endif
+
 #define SAVE_ROOT_JMPBUF(th, stmt) do \
   if (ruby_setjmp((th)->root_jmpbuf) == 0) { \
+      SAVE_ROOT_JMPBUF_BEFORE_STMT \
       stmt; \
+      SAVE_ROOT_JMPBUF_AFTER_STMT \
   } \
   else { \
       rb_fiber_start(); \
@@ -95,8 +114,7 @@ extern int select_large_fdset(int, fd_set *, fd_set *, fd_set *, struct timeval 
   rb_thread_t * const _th = (th); \
   struct rb_vm_tag _tag; \
   _tag.tag = 0; \
-  _tag.prev = _th->tag; \
-  _th->tag = &_tag;
+  _tag.prev = _th->tag;
 
 #define TH_POP_TAG() \
   _th->tag = _tag.prev; \
@@ -104,6 +122,12 @@ extern int select_large_fdset(int, fd_set *, fd_set *, fd_set *, struct timeval 
 
 #define TH_POP_TAG2() \
   _th->tag = _tag.prev
+
+#define TH_PUSH_TAG2() (_th->tag = &_tag, 0)
+
+#define TH_TMPPOP_TAG() TH_POP_TAG2()
+
+#define TH_REPUSH_TAG() TH_PUSH_TAG2()
 
 #define PUSH_TAG() TH_PUSH_TAG(GET_THREAD())
 #define POP_TAG()      TH_POP_TAG()
@@ -129,7 +153,7 @@ rb_threadptr_tag_jump(rb_thread_t *th, int st)
   [ISO/IEC 9899:1999] 7.13.1.1
 */
 #define TH_EXEC_TAG() \
-    (ruby_setjmp(_th->tag->buf) ? rb_threadptr_tag_state(_th) : 0)
+    (ruby_setjmp(_tag.buf) ? rb_threadptr_tag_state(_th) : TH_PUSH_TAG2())
 
 #define EXEC_TAG() \
   TH_EXEC_TAG()

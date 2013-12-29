@@ -740,6 +740,9 @@ VALUE rb_obj_setup(VALUE obj, VALUE klass, VALUE type);
 #ifndef RGENGC_WB_PROTECTED_BIGNUM
 #define RGENGC_WB_PROTECTED_BIGNUM 1
 #endif
+#ifndef RGENGC_WB_PROTECTED_NODE_CREF
+#define RGENGC_WB_PROTECTED_NODE_CREF 1
+#endif
 
 struct RBasic {
     VALUE flags;
@@ -786,9 +789,9 @@ typedef struct rb_classext_struct rb_classext_t;
 
 struct RClass {
     struct RBasic basic;
+    VALUE super;
     rb_classext_t *ptr;
-    struct st_table *m_tbl;
-    struct st_table *iv_index_tbl;
+    struct method_table_wrapper *m_tbl_wrapper;
 };
 #define RCLASS_SUPER(c) rb_class_get_superclass(c)
 #define RMODULE_IV_TBL(m) RCLASS_IV_TBL(m)
@@ -898,7 +901,7 @@ struct RArray {
 #define RARRAY_AREF(a, i)    (RARRAY_CONST_PTR(a)[i])
 #define RARRAY_ASET(a, i, v) do { \
     const VALUE _ary_ = (a); \
-    OBJ_WRITE(_ary_, &RARRAY_CONST_PTR(_ary_)[i], (v)); \
+    RB_OBJ_WRITE(_ary_, &RARRAY_CONST_PTR(_ary_)[i], (v)); \
 } while (0)
 
 #define RARRAY_PTR(a) ((VALUE *)RARRAY_CONST_PTR(RGENGC_WB_PROTECTED_ARRAY ? OBJ_WB_UNPROTECT((VALUE)a) : ((VALUE)a)))
@@ -939,8 +942,8 @@ struct RRational {
     const VALUE den;
 };
 
-#define RRATIONAL_SET_NUM(rat, n) OBJ_WRITE((rat), &((struct RRational *)(rat))->num,(n))
-#define RRATIONAL_SET_DEN(rat, d) OBJ_WRITE((rat), &((struct RRational *)(rat))->den,(d))
+#define RRATIONAL_SET_NUM(rat, n) RB_OBJ_WRITE((rat), &((struct RRational *)(rat))->num,(n))
+#define RRATIONAL_SET_DEN(rat, d) RB_OBJ_WRITE((rat), &((struct RRational *)(rat))->den,(d))
 
 struct RComplex {
     struct RBasic basic;
@@ -948,8 +951,8 @@ struct RComplex {
     const VALUE imag;
 };
 
-#define RCOMPLEX_SET_REAL(cmp, r) OBJ_WRITE((cmp), &((struct RComplex *)(cmp))->real,(r))
-#define RCOMPLEX_SET_IMAG(cmp, i) OBJ_WRITE((cmp), &((struct RComplex *)(cmp))->imag,(i))
+#define RCOMPLEX_SET_REAL(cmp, r) RB_OBJ_WRITE((cmp), &((struct RComplex *)(cmp))->real,(r))
+#define RCOMPLEX_SET_IMAG(cmp, i) RB_OBJ_WRITE((cmp), &((struct RComplex *)(cmp))->imag,(i))
 
 struct RData {
     struct RBasic basic;
@@ -1064,11 +1067,16 @@ struct RStruct {
    RSTRUCT(st)->as.heap.ptr)
 #define RSTRUCT_PTR(st) ((VALUE *)RSTRUCT_CONST_PTR(RGENGC_WB_PROTECTED_STRUCT ? OBJ_WB_UNPROTECT((VALUE)st) : (VALUE)st))
 
-#define RSTRUCT_SET(st, idx, v) OBJ_WRITE(st, &RSTRUCT_CONST_PTR(st)[idx], (v))
+#define RSTRUCT_SET(st, idx, v) RB_OBJ_WRITE(st, &RSTRUCT_CONST_PTR(st)[idx], (v))
 #define RSTRUCT_GET(st, idx)    (RSTRUCT_CONST_PTR(st)[idx])
 
+#define RBIGNUM_EMBED_LEN_NUMBITS 3
 #ifndef RBIGNUM_EMBED_LEN_MAX
-# define RBIGNUM_EMBED_LEN_MAX ((int)((sizeof(VALUE)*3)/sizeof(BDIGIT)))
+# if (SIZEOF_VALUE*3/SIZEOF_ACTUAL_BDIGIT) < (1 << RBIGNUM_EMBED_LEN_NUMBITS)-1
+#   define RBIGNUM_EMBED_LEN_MAX (SIZEOF_VALUE*3/SIZEOF_ACTUAL_BDIGIT)
+# else
+#   define RBIGNUM_EMBED_LEN_MAX ((1 << RBIGNUM_EMBED_LEN_NUMBITS)-1)
+# endif
 #endif
 struct RBignum {
     struct RBasic basic;
@@ -1091,7 +1099,7 @@ struct RBignum {
 
 #define RBIGNUM_EMBED_FLAG FL_USER2
 #define RBIGNUM_EMBED_LEN_MASK (FL_USER5|FL_USER4|FL_USER3)
-#define RBIGNUM_EMBED_LEN_SHIFT (FL_USHIFT+3)
+#define RBIGNUM_EMBED_LEN_SHIFT (FL_USHIFT+RBIGNUM_EMBED_LEN_NUMBITS)
 #define RBIGNUM_LEN(b) \
     ((RBASIC(b)->flags & RBIGNUM_EMBED_FLAG) ? \
      (long)((RBASIC(b)->flags >> RBIGNUM_EMBED_LEN_SHIFT) & \
@@ -1191,8 +1199,19 @@ void rb_gc_writebarrier_unprotect_promoted(VALUE obj);
 #define OBJ_WB_UNPROTECT(x)         rb_obj_wb_unprotect(x, __FILE__, __LINE__)
 #endif
 
-#define OBJ_WRITE(a, slot, b)       rb_obj_write((VALUE)(a), (VALUE *)(slot), (VALUE)(b), __FILE__, __LINE__)
-#define OBJ_WRITTEN(a, oldv, b)     rb_obj_written((VALUE)(a), (VALUE)(oldv), (VALUE)(b), __FILE__, __LINE__)
+/* Write barrier (WB) interfaces:
+ * - RB_OBJ_WRITE(a, slot, b): WB for new reference from `a' to `b'.
+ *     Write `b' into `*slot'. `slot' is a pointer in `a'.
+ * - RB_OBJ_WRITTEN(a, oldv, b): WB for new reference from `a' to `b'.
+ *     This doesn't write any values, but only a WB declaration.
+ *     `oldv' is replaced value with `b' (not used in current Ruby).
+ * 
+ * NOTE: The following core interfaces can be changed in the future.
+ *       Please catch up if you want to insert WB into C-extensions
+ *       correctly.
+ */
+#define RB_OBJ_WRITE(a, slot, b)       rb_obj_write((VALUE)(a), (VALUE *)(slot), (VALUE)(b), __FILE__, __LINE__)
+#define RB_OBJ_WRITTEN(a, oldv, b)     rb_obj_written((VALUE)(a), (VALUE)(oldv), (VALUE)(b), __FILE__, __LINE__)
 
 #ifndef USE_RGENGC_LOGGING_WB_UNPROTECT
 #define USE_RGENGC_LOGGING_WB_UNPROTECT 0
@@ -1488,17 +1507,27 @@ PRINTF_ARGS(void rb_compile_warn(const char *, int, const char*, ...), 3, 4);
 #define RB_IO_WAIT_READABLE 0
 #define RB_IO_WAIT_WRITABLE 1
 
-typedef VALUE rb_block_call_func(VALUE, VALUE, int, VALUE*);
+#define RUBY_BLOCK_CALL_FUNC_TAKES_BLOCKARG 1
+#define RB_BLOCK_CALL_FUNC_ARGLIST(yielded_arg, callback_arg) \
+    VALUE yielded_arg, VALUE callback_arg, int argc, const VALUE *argv, VALUE blockarg
+typedef VALUE rb_block_call_func(RB_BLOCK_CALL_FUNC_ARGLIST(yielded_arg, callback_arg));
+
+#if defined RB_BLOCK_CALL_FUNC_STRICT && RB_BLOCK_CALL_FUNC_STRICT
+typedef rb_block_call_func *rb_block_call_func_t;
+#else
+typedef VALUE (*rb_block_call_func_t)(ANYARGS);
+#endif
 
 VALUE rb_each(VALUE);
 VALUE rb_yield(VALUE);
 VALUE rb_yield_values(int n, ...);
 VALUE rb_yield_values2(int n, const VALUE *argv);
 VALUE rb_yield_splat(VALUE);
+VALUE rb_yield_block(VALUE, VALUE, int, const VALUE *, VALUE); /* rb_block_call_func */
 int rb_block_given_p(void);
 void rb_need_block(void);
 VALUE rb_iterate(VALUE(*)(VALUE),VALUE,VALUE(*)(ANYARGS),VALUE);
-VALUE rb_block_call(VALUE,ID,int,VALUE*,VALUE(*)(ANYARGS),VALUE);
+VALUE rb_block_call(VALUE,ID,int,const VALUE*,rb_block_call_func_t,VALUE);
 VALUE rb_rescue(VALUE(*)(ANYARGS),VALUE,VALUE(*)(ANYARGS),VALUE);
 VALUE rb_rescue2(VALUE(*)(ANYARGS),VALUE,VALUE(*)(ANYARGS),VALUE,...);
 VALUE rb_ensure(VALUE(*)(ANYARGS),VALUE,VALUE(*)(ANYARGS),VALUE);
@@ -1697,15 +1726,16 @@ int ruby_native_thread_p(void);
 #define RUBY_EVENT_COVERAGE               0x020000
 
 /* internal events */
-#define RUBY_INTERNAL_EVENT_SWITCH        0x040000
-#define RUBY_EVENT_SWITCH                 0x040000 /* obsolete name. this macro is for compatibility */
-                                       /* 0x080000 */
-#define RUBY_INTERNAL_EVENT_NEWOBJ        0x100000
-#define RUBY_INTERNAL_EVENT_FREEOBJ       0x200000
-#define RUBY_INTERNAL_EVENT_GC_START      0x400000
-#define RUBY_INTERNAL_EVENT_GC_END        0x800000
-#define RUBY_INTERNAL_EVENT_OBJSPACE_MASK 0xf00000
-#define RUBY_INTERNAL_EVENT_MASK        0xfffe0000
+#define RUBY_INTERNAL_EVENT_SWITCH          0x040000
+#define RUBY_EVENT_SWITCH                   0x040000 /* obsolete name. this macro is for compatibility */
+                                         /* 0x080000 */
+#define RUBY_INTERNAL_EVENT_NEWOBJ          0x100000
+#define RUBY_INTERNAL_EVENT_FREEOBJ         0x200000
+#define RUBY_INTERNAL_EVENT_GC_START        0x400000
+#define RUBY_INTERNAL_EVENT_GC_END_MARK     0x800000
+#define RUBY_INTERNAL_EVENT_GC_END_SWEEP   0x1000000
+#define RUBY_INTERNAL_EVENT_OBJSPACE_MASK  0x1f00000
+#define RUBY_INTERNAL_EVENT_MASK          0xfffe0000
 
 typedef unsigned long rb_event_flag_t;
 typedef void (*rb_event_hook_func_t)(rb_event_flag_t evflag, VALUE data, VALUE self, ID mid, VALUE klass);

@@ -1,23 +1,27 @@
-=begin
-= $RCSfile$ -- Buffering mix-in module.
-
-= Info
-  'OpenSSL for Ruby 2' project
-  Copyright (C) 2001 GOTOU YUUZOU <gotoyuzo@notwork.org>
-  All rights reserved.
-
-= Licence
-  This program is licenced under the same licence as Ruby.
-  (See the file 'LICENCE'.)
-
-= Version
-  $Id$
-=end
+# coding: binary
+#--
+#= $RCSfile$ -- Buffering mix-in module.
+#
+#= Info
+#  'OpenSSL for Ruby 2' project
+#  Copyright (C) 2001 GOTOU YUUZOU <gotoyuzo@notwork.org>
+#  All rights reserved.
+#
+#= Licence
+#  This program is licenced under the same licence as Ruby.
+#  (See the file 'LICENCE'.)
+#
+#= Version
+#  $Id$
+#++
 
 ##
 # OpenSSL IO buffering mix-in module.
 #
 # This module allows an OpenSSL::SSL::SSLSocket to behave like an IO.
+#
+# You typically won't use this module directly, you can see it implemented in
+# OpenSSL::SSL::SSLSocket.
 
 module OpenSSL::Buffering
   include Enumerable
@@ -34,7 +38,11 @@ module OpenSSL::Buffering
 
   BLOCK_SIZE = 1024*16
 
-  def initialize(*args)
+  ##
+  # Creates an instance of OpenSSL's buffering IO module.
+
+  def initialize(*)
+    super
     @eof = false
     @rbuffer = ""
     @sync = @io.sync

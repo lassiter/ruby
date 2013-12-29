@@ -335,8 +335,8 @@ rb_obj_clone(VALUE obj)
         rb_raise(rb_eTypeError, "can't clone %s", rb_obj_classname(obj));
     }
     clone = rb_obj_alloc(rb_obj_class(obj));
-    RBASIC(clone)->flags &= FL_TAINT;
-    RBASIC(clone)->flags |= RBASIC(obj)->flags & ~(FL_PROMOTED|FL_FREEZE|FL_FINALIZE);
+    RBASIC(clone)->flags &= (FL_TAINT|FL_PROMOTED|FL_WB_PROTECTED);
+    RBASIC(clone)->flags |= RBASIC(obj)->flags & ~(FL_PROMOTED|FL_FREEZE|FL_FINALIZE|FL_WB_PROTECTED);
 
     singleton = rb_singleton_class_clone_and_attach(obj, clone);
     RBASIC_SET_CLASS(clone, singleton);
@@ -356,17 +356,42 @@ rb_obj_clone(VALUE obj)
  *     obj.dup -> an_object
  *
  *  Produces a shallow copy of <i>obj</i>---the instance variables of
- *  <i>obj</i> are copied, but not the objects they reference.
- *  <code>dup</code> copies the tainted state of <i>obj</i>. See also
- *  the discussion under <code>Object#clone</code>. In general,
- *  <code>clone</code> and <code>dup</code> may have different semantics
- *  in descendant classes. While <code>clone</code> is used to duplicate
- *  an object, including its internal state, <code>dup</code> typically
- *  uses the class of the descendant object to create the new instance.
+ *  <i>obj</i> are copied, but not the objects they reference. <code>dup</code>
+ *  copies the tainted state of <i>obj</i>.
  *
  *  This method may have class-specific behavior.  If so, that
  *  behavior will be documented under the #+initialize_copy+ method of
  *  the class.
+ *
+ *  === on dup vs clone
+ *
+ *  In general, <code>clone</code> and <code>dup</code> may have different
+ *  semantics in descendant classes. While <code>clone</code> is used to
+ *  duplicate an object, including its internal state, <code>dup</code>
+ *  typically uses the class of the descendant object to create the new
+ *  instance.
+ *
+ *  When using #dup any modules that the object has been extended with will not
+ *  be copied.
+ *
+ *	class Klass
+ *	  attr_accessor :str
+ *	end
+ *
+ *	module Foo
+ *	  def foo; 'foo'; end
+ *	end
+ *
+ *	s1 = Klass.new #=> #<Klass:0x401b3a38>
+ *	s1.extend(Foo) #=> #<Klass:0x401b3a38>
+ *	s1.foo #=> "foo"
+ *
+ *	s2 = s1.clone #=> #<Klass:0x401b3a38>
+ *	s2.foo #=> "foo"
+ *
+ *	s3 = s1.dup #=> #<Klass:0x401b3a38>
+ *	s3.foo #=> NoMethodError: undefined method `foo' for #<Klass:0x401b3a38>
+ *
  */
 
 VALUE
@@ -621,7 +646,7 @@ rb_obj_is_kind_of(VALUE obj, VALUE c)
     c = class_or_module_required(c);
     c = RCLASS_ORIGIN(c);
     while (cl) {
-	if (cl == c || RCLASS_M_TBL(cl) == RCLASS_M_TBL(c))
+	if (cl == c || RCLASS_M_TBL_WRAPPER(cl) == RCLASS_M_TBL_WRAPPER(c))
 	    return Qtrue;
 	cl = RCLASS_SUPER(cl);
     }
@@ -1524,13 +1549,13 @@ rb_class_inherited_p(VALUE mod, VALUE arg)
     }
     arg = RCLASS_ORIGIN(arg);
     while (mod) {
-	if (RCLASS_M_TBL(mod) == RCLASS_M_TBL(arg))
+	if (RCLASS_M_TBL_WRAPPER(mod) == RCLASS_M_TBL_WRAPPER(arg))
 	    return Qtrue;
 	mod = RCLASS_SUPER(mod);
     }
     /* not mod < arg; check if mod > arg */
     while (arg) {
-	if (RCLASS_M_TBL(arg) == RCLASS_M_TBL(start))
+	if (RCLASS_M_TBL_WRAPPER(arg) == RCLASS_M_TBL_WRAPPER(start))
 	    return Qfalse;
 	arg = RCLASS_SUPER(arg);
     }
@@ -1859,7 +1884,7 @@ rb_class_superclass(VALUE klass)
 VALUE
 rb_class_get_superclass(VALUE klass)
 {
-    return RCLASS_EXT(klass)->super;
+    return RCLASS(klass)->super;
 }
 
 #define id_for_setter(name, type, message) \
@@ -2049,7 +2074,6 @@ rb_mod_const_get(int argc, VALUE *argv, VALUE mod)
     rb_encoding *enc;
     const char *pbeg, *p, *path, *pend;
     ID id;
-    int nestable = 1;
 
     if (argc == 1) {
 	name = argv[0];
@@ -2060,15 +2084,13 @@ rb_mod_const_get(int argc, VALUE *argv, VALUE mod)
     }
 
     if (SYMBOL_P(name)) {
-	name = rb_sym_to_s(name);
-	nestable = 0;
+	id = SYM2ID(name);
+	if (!rb_is_const_id(id)) goto wrong_id;
+	return RTEST(recur) ? rb_const_get(mod, id) : rb_const_get_at(mod, id);
     }
 
-    name = rb_check_string_type(name);
-    Check_Type(name, T_STRING);
-
+    path = StringValuePtr(name);
     enc = rb_enc_get(name);
-    path = RSTRING_PTR(name);
 
     if (!rb_enc_asciicompat(enc)) {
 	rb_raise(rb_eArgError, "invalid class path encoding (non ASCII)");
@@ -2084,7 +2106,6 @@ rb_mod_const_get(int argc, VALUE *argv, VALUE mod)
     }
 
     if (p + 2 < pend && p[0] == ':' && p[1] == ':') {
-	if (!nestable) goto wrong_name;
 	mod = rb_cObject;
 	p += 2;
 	pbeg = p;
@@ -2102,7 +2123,6 @@ rb_mod_const_get(int argc, VALUE *argv, VALUE mod)
 	beglen = pbeg-path;
 
 	if (p < pend && p[0] == ':') {
-	    if (!nestable) goto wrong_name;
 	    if (p + 2 >= pend || p[1] != ':') goto wrong_name;
 	    p += 2;
 	    pbeg = p;
@@ -2114,22 +2134,23 @@ rb_mod_const_get(int argc, VALUE *argv, VALUE mod)
 	}
 
 	if (!id) {
-	    if (!ISUPPER(*pbeg) || !rb_enc_symname2_p(pbeg, len, enc)) {
-		part = rb_str_subseq(name, beglen, len);
+	    part = rb_str_subseq(name, beglen, len);
+	    OBJ_FREEZE(part);
+	    if (!ISUPPER(*pbeg) || !rb_is_const_name(part)) {
 		rb_name_error_str(part, "wrong constant name %"PRIsVALUE,
 				  QUOTE(part));
 	    }
 	    else if (!rb_method_basic_definition_p(CLASS_OF(mod), id_const_missing)) {
-		id = rb_intern3(pbeg, len, enc);
+		id = rb_intern_str(part);
 	    }
 	    else {
-		part = rb_str_subseq(name, beglen, len);
 		rb_name_error_str(part, "uninitialized constant %"PRIsVALUE"%"PRIsVALUE,
 				  rb_str_subseq(name, 0, beglen),
 				  QUOTE(part));
 	    }
 	}
 	if (!rb_is_const_id(id)) {
+	  wrong_id:
 	    rb_name_error(id, "wrong constant name %"PRIsVALUE,
 			  QUOTE_ID(id));
 	}
@@ -2192,6 +2213,8 @@ static VALUE
 rb_mod_const_defined(int argc, VALUE *argv, VALUE mod)
 {
     VALUE name, recur;
+    rb_encoding *enc;
+    const char *pbeg, *p, *path, *pend;
     ID id;
 
     if (argc == 1) {
@@ -2201,20 +2224,87 @@ rb_mod_const_defined(int argc, VALUE *argv, VALUE mod)
     else {
 	rb_scan_args(argc, argv, "11", &name, &recur);
     }
-    if (!(id = rb_check_id(&name))) {
-	if (rb_is_const_name(name)) {
-	    return Qfalse;
+
+    if (SYMBOL_P(name)) {
+	id = SYM2ID(name);
+	if (!rb_is_const_id(id)) goto wrong_id;
+	return RTEST(recur) ? rb_const_defined(mod, id) : rb_const_defined_at(mod, id);
+    }
+
+    path = StringValuePtr(name);
+    enc = rb_enc_get(name);
+
+    if (!rb_enc_asciicompat(enc)) {
+	rb_raise(rb_eArgError, "invalid class path encoding (non ASCII)");
+    }
+
+    pbeg = p = path;
+    pend = path + RSTRING_LEN(name);
+
+    if (p >= pend || !*p) {
+      wrong_name:
+	rb_raise(rb_eNameError, "wrong constant name %"PRIsVALUE,
+		 QUOTE(name));
+    }
+
+    if (p + 2 < pend && p[0] == ':' && p[1] == ':') {
+	mod = rb_cObject;
+	p += 2;
+	pbeg = p;
+    }
+
+    while (p < pend) {
+	VALUE part;
+	long len, beglen;
+
+	while (p < pend && *p != ':') p++;
+
+	if (pbeg == p) goto wrong_name;
+
+	id = rb_check_id_cstr(pbeg, len = p-pbeg, enc);
+	beglen = pbeg-path;
+
+	if (p < pend && p[0] == ':') {
+	    if (p + 2 >= pend || p[1] != ':') goto wrong_name;
+	    p += 2;
+	    pbeg = p;
+	}
+
+	if (!id) {
+	    part = rb_str_subseq(name, beglen, len);
+	    OBJ_FREEZE(part);
+	    if (!ISUPPER(*pbeg) || !rb_is_const_name(part)) {
+		rb_name_error_str(part, "wrong constant name %"PRIsVALUE,
+				  QUOTE(part));
+	    }
+	    else {
+		return Qfalse;
+	    }
+	}
+	if (!rb_is_const_id(id)) {
+	  wrong_id:
+	    rb_name_error(id, "wrong constant name %"PRIsVALUE,
+			  QUOTE_ID(id));
+	}
+	if (RTEST(recur)) {
+	    if (!rb_const_defined(mod, id))
+		return Qfalse;
+	    mod = rb_const_get(mod, id);
 	}
 	else {
-	    rb_name_error_str(name, "wrong constant name %"PRIsVALUE,
-			      QUOTE(name));
+	    if (!rb_const_defined_at(mod, id))
+		return Qfalse;
+	    mod = rb_const_get_at(mod, id);
+	}
+	recur = Qfalse;
+
+	if (p < pend && !RB_TYPE_P(mod, T_MODULE) && !RB_TYPE_P(mod, T_CLASS)) {
+	    rb_raise(rb_eTypeError, "%"PRIsVALUE" does not refer to class/module",
+		     QUOTE(name));
 	}
     }
-    if (!rb_is_const_id(id)) {
-	rb_name_error(id, "wrong constant name %"PRIsVALUE,
-		      QUOTE_ID(id));
-    }
-    return RTEST(recur) ? rb_const_defined(mod, id) : rb_const_defined_at(mod, id);
+
+    return Qtrue;
 }
 
 /*
@@ -2433,6 +2523,19 @@ rb_mod_cvar_defined(VALUE obj, VALUE iv)
     }
     return rb_cvar_defined(obj, id);
 }
+
+/*
+ *  call-seq:
+ *     mod.singleton_class?    -> true or false
+ *
+ *  Returns <code>true</code> if <i>mod</i> is a singleton class or
+ *  <code>false</code> if it is an ordinary class or module.
+ *
+ *     class C
+ *     end
+ *     C.singleton_class?                  #=> false
+ *     C.singleton_class.singleton_class?  #=> true
+ */
 
 static VALUE
 rb_mod_singleton_p(VALUE klass)

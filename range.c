@@ -243,25 +243,6 @@ range_eql(VALUE range, VALUE obj)
     return rb_exec_recursive_paired(recursive_eql, range, obj, obj);
 }
 
-static VALUE
-recursive_hash(VALUE range, VALUE dummy, int recur)
-{
-    st_index_t hash = EXCL(range);
-    VALUE v;
-
-    hash = rb_hash_start(hash);
-    if (!recur) {
-	v = rb_hash(RANGE_BEG(range));
-	hash = rb_hash_uint(hash, NUM2LONG(v));
-	v = rb_hash(RANGE_END(range));
-	hash = rb_hash_uint(hash, NUM2LONG(v));
-    }
-    hash = rb_hash_uint(hash, EXCL(range) << 24);
-    hash = rb_hash_end(hash);
-
-    return LONG2FIX(hash);
-}
-
 /*
  * call-seq:
  *   rng.hash    -> fixnum
@@ -274,11 +255,22 @@ recursive_hash(VALUE range, VALUE dummy, int recur)
 static VALUE
 range_hash(VALUE range)
 {
-    return rb_exec_recursive_outer(recursive_hash, range, 0);
+    st_index_t hash = EXCL(range);
+    VALUE v;
+
+    hash = rb_hash_start(hash);
+    v = rb_hash(RANGE_BEG(range));
+    hash = rb_hash_uint(hash, NUM2LONG(v));
+    v = rb_hash(RANGE_END(range));
+    hash = rb_hash_uint(hash, NUM2LONG(v));
+    hash = rb_hash_uint(hash, EXCL(range) << 24);
+    hash = rb_hash_end(hash);
+
+    return LONG2FIX(hash);
 }
 
 static void
-range_each_func(VALUE range, VALUE (*func) (VALUE, void *), void *arg)
+range_each_func(VALUE range, rb_block_call_func *func, VALUE arg)
 {
     int c;
     VALUE b = RANGE_BEG(range);
@@ -287,13 +279,13 @@ range_each_func(VALUE range, VALUE (*func) (VALUE, void *), void *arg)
 
     if (EXCL(range)) {
 	while (r_lt(v, e)) {
-	    (*func) (v, arg);
+	    (*func) (v, arg, 0, 0, 0);
 	    v = rb_funcall(v, id_succ, 0, 0);
 	}
     }
     else {
 	while ((c = r_le(v, e)) != Qfalse) {
-	    (*func) (v, arg);
+	    (*func) (v, arg, 0, 0, 0);
 	    if (c == (int)INT2FIX(0))
 		break;
 	    v = rb_funcall(v, id_succ, 0, 0);
@@ -302,9 +294,9 @@ range_each_func(VALUE range, VALUE (*func) (VALUE, void *), void *arg)
 }
 
 static VALUE
-sym_step_i(VALUE i, void *arg)
+sym_step_i(RB_BLOCK_CALL_FUNC_ARGLIST(i, arg))
 {
-    VALUE *iter = arg;
+    VALUE *iter = (VALUE *)arg;
 
     if (FIXNUM_P(iter[0])) {
 	iter[0] -= INT2FIX(1) & ~FIXNUM_FLAG;
@@ -320,9 +312,9 @@ sym_step_i(VALUE i, void *arg)
 }
 
 static VALUE
-step_i(VALUE i, void *arg)
+step_i(RB_BLOCK_CALL_FUNC_ARGLIST(i, arg))
 {
-    VALUE *iter = arg;
+    VALUE *iter = (VALUE *)arg;
 
     if (FIXNUM_P(iter[0])) {
 	iter[0] -= INT2FIX(1) & ~FIXNUM_FLAG;
@@ -488,7 +480,7 @@ range_step(int argc, VALUE *argv, VALUE range)
 	    }
 	    args[0] = INT2FIX(1);
 	    args[1] = step;
-	    range_each_func(range, step_i, args);
+	    range_each_func(range, step_i, (VALUE)args);
 	}
     }
     return range;
@@ -702,14 +694,14 @@ range_bsearch(VALUE range)
 }
 
 static VALUE
-each_i(VALUE v, void *arg)
+each_i(RB_BLOCK_CALL_FUNC_ARGLIST(v, arg))
 {
     rb_yield(v);
     return Qnil;
 }
 
 static VALUE
-sym_each_i(VALUE v, void *arg)
+sym_each_i(RB_BLOCK_CALL_FUNC_ARGLIST(v, arg))
 {
     rb_yield(rb_str_intern(v));
     return Qnil;
@@ -796,14 +788,14 @@ range_each(VALUE range)
 
 	    args[0] = end;
 	    args[1] = EXCL(range) ? Qtrue : Qfalse;
-	    rb_block_call(tmp, rb_intern("upto"), 2, args, rb_yield, 0);
+	    rb_block_call(tmp, rb_intern("upto"), 2, args, each_i, 0);
 	}
 	else {
 	    if (!discrete_object_p(beg)) {
 		rb_raise(rb_eTypeError, "can't iterate from %s",
 			 rb_obj_classname(beg));
 	    }
-	    range_each_func(range, each_i, NULL);
+	    range_each_func(range, each_i, 0);
 	}
     }
     return range;
@@ -844,8 +836,9 @@ range_end(VALUE range)
 
 
 static VALUE
-first_i(VALUE i, VALUE *ary)
+first_i(RB_BLOCK_CALL_FUNC_ARGLIST(i, cbarg))
 {
+    VALUE *ary = (VALUE *)cbarg;
     long n = NUM2LONG(ary[0]);
 
     if (n <= 0) {

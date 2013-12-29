@@ -275,10 +275,6 @@ rb_cloexec_dup2(int oldfd, int newfd)
         }
 #else
         ret = dup2(oldfd, newfd);
-# ifdef _WIN32
-	if (newfd >= 0 && newfd <= 2)
-	    SetStdHandle(newfd == 0 ? STD_INPUT_HANDLE : newfd == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE, (HANDLE)rb_w32_get_osfhandle(newfd));
-# endif
 #endif
         if (ret == -1) return -1;
     }
@@ -11131,7 +11127,7 @@ argf_readbyte(VALUE argf)
 #define FOREACH_ARGF() while (next_argv())
 
 static VALUE
-argf_block_call_i(VALUE i, VALUE argf, int argc, VALUE *argv)
+argf_block_call_i(RB_BLOCK_CALL_FUNC_ARGLIST(i, argf))
 {
     const VALUE current = ARGF.current_file;
     rb_yield_values2(argc, argv);

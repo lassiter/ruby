@@ -14,14 +14,14 @@ define ruby_gdb_init
   if !$color_end
     set $color_end = "\033[m"
   end
+  if ruby_dummy_gdb_enums.special_consts
+  end
 end
 
 # set prompt \033[36m(gdb)\033[m\040
 
 define rp
   ruby_gdb_init
-  if ruby_dummy_gdb_enums.special_consts
-  end
   if (VALUE)($arg0) & RUBY_FIXNUM_FLAG
     printf "FIXNUM: %ld\n", (long)($arg0) >> 1
   else
@@ -745,6 +745,7 @@ define rb_numtable_entry
 end
 
 define rb_id2name
+  ruby_gdb_init
   printf "%sID%s: ", $color_type, $color_end
   rp_id $arg0
 end
@@ -757,7 +758,7 @@ define rb_method_entry
   set $rb_method_entry_id = (ID)$arg1
   set $rb_method_entry_me = (rb_method_entry_t *)0
   while !$rb_method_entry_me && $rb_method_entry_klass
-    rb_numtable_entry $rb_method_entry_klass->m_tbl $rb_method_entry_id
+    rb_numtable_entry $rb_method_entry_klass->m_tbl_wrapper->tbl $rb_method_entry_id
     set $rb_method_entry_me = (rb_method_entry_t *)$rb_numtable_rec
     if !$rb_method_entry_me
       set $rb_method_entry_klass = (struct RClass *)$rb_method_entry_klass->ptr->super

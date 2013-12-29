@@ -36,9 +36,7 @@ VALUE rb_cBignum;
 const char ruby_digitmap[] = "0123456789abcdefghijklmnopqrstuvwxyz";
 
 #ifndef SIZEOF_BDIGIT_DBL
-# if defined(HAVE_INT64_T) && defined(HAVE_INT128_T)
-#  define SIZEOF_BDIGIT_DBL SIZEOF_INT128_T
-# elif SIZEOF_INT*2 <= SIZEOF_LONG_LONG
+# if SIZEOF_INT*2 <= SIZEOF_LONG_LONG
 #  define SIZEOF_BDIGIT_DBL SIZEOF_LONG_LONG
 # else
 #  define SIZEOF_BDIGIT_DBL SIZEOF_LONG
@@ -3336,8 +3334,12 @@ absint_numwords_generic(size_t numbytes, int nlz_bits_in_msbyte, size_t word_num
     sign = bary_pack(+1, BARY_ARGS(div_bary), &numwords, 1, sizeof(numwords), 0,
         INTEGER_PACK_NATIVE_BYTE_ORDER);
 
-    if (sign == 2)
+    if (sign == 2) {
+#if defined __GNUC__ && (__GNUC__ == 4 && __GNUC_MINOR__ == 4)
+	*nlz_bits_ret = 0;
+#endif
         return (size_t)-1;
+    }
     *nlz_bits_ret = nlz_bits;
     return numwords;
 }
@@ -6443,7 +6445,7 @@ bigand_int(VALUE x, long xn, BDIGIT hibitsx, long y)
 
 #if SIZEOF_BDIGITS >= SIZEOF_LONG
     i = 1;
-    zds[0] = xds[0] & y;
+    zds[0] = xds[0] & BIGLO(y);
 #else
     for (i=0; i < xn; i++) {
         if (y == 0 || y == -1) break;
@@ -6549,7 +6551,7 @@ bigor_int(VALUE x, long xn, BDIGIT hibitsx, long y)
 
 #if SIZEOF_BDIGITS >= SIZEOF_LONG
     i = 1;
-    zds[0] = xds[0] | y;
+    zds[0] = xds[0] | BIGLO(y);
     if (i < zn)
         goto y_is_fixed_point;
     goto finish;
@@ -6672,7 +6674,7 @@ bigxor_int(VALUE x, long xn, BDIGIT hibitsx, long y)
 
 #if SIZEOF_BDIGITS >= SIZEOF_LONG
     i = 1;
-    zds[0] = xds[0] ^ y;
+    zds[0] = xds[0] ^ BIGLO(y);
 #else
     for (i = 0; i < xn; i++) {
         zds[i] = xds[i] ^ BIGLO(y);

@@ -14,6 +14,8 @@
 #include "gc.h"
 #include "iseq.h"
 
+NODE *rb_vm_cref_in_context(VALUE self);
+
 struct METHOD {
     VALUE recv;
     VALUE rclass;
@@ -1139,6 +1141,7 @@ mnew_from_me(rb_method_entry_t *me, VALUE defined_class, VALUE klass,
 	if (obj != Qundef && !rb_method_basic_definition_p(klass, rmiss)) {
 	    if (RTEST(rb_funcall(obj, rmiss, 2, sym, scope ? Qfalse : Qtrue))) {
 		me = 0;
+		defined_class = klass;
 
 		goto gen_method;
 	    }
@@ -1168,15 +1171,15 @@ mnew_from_me(rb_method_entry_t *me, VALUE defined_class, VALUE klass,
 	goto again;
     }
 
+    if (RB_TYPE_P(defined_class, T_ICLASS)) {
+	defined_class = RBASIC_CLASS(defined_class);
+    }
+
     klass = defined_class;
 
     while (rclass != klass &&
 	   (FL_TEST(rclass, FL_SINGLETON) || RB_TYPE_P(rclass, T_ICLASS))) {
 	rclass = RCLASS_SUPER(rclass);
-    }
-
-    if (RB_TYPE_P(klass, T_ICLASS)) {
-	klass = RBASIC(klass)->klass;
     }
 
   gen_method:
@@ -1395,7 +1398,7 @@ method_owner(VALUE obj)
     struct METHOD *data;
 
     TypedData_Get_Struct(obj, struct METHOD, &method_data_type, data);
-    return data->me->klass;
+    return data->defined_class;
 }
 
 void
@@ -1618,7 +1621,12 @@ rb_mod_define_method(int argc, VALUE *argv, VALUE mod)
 {
     ID id;
     VALUE body;
-    int noex = (int)rb_vm_cref()->nd_visi;
+    int noex = NOEX_PUBLIC;
+    const NODE *cref = rb_vm_cref_in_context(mod);
+
+    if (cref && cref->nd_clss == mod) {
+	noex = (int)cref->nd_visi;
+    }
 
     if (argc == 1) {
 	id = rb_to_id(argv[0]);
@@ -1661,7 +1669,7 @@ rb_mod_define_method(int argc, VALUE *argv, VALUE mod)
 	GetProcPtr(body, proc);
 	if (BUILTIN_TYPE(proc->block.iseq) != T_NODE) {
 	    proc->block.iseq->defined_method_id = id;
-	    OBJ_WRITE(proc->block.iseq->self, &proc->block.iseq->klass, mod);
+	    RB_OBJ_WRITE(proc->block.iseq->self, &proc->block.iseq->klass, mod);
 	    proc->is_lambda = TRUE;
 	    proc->is_from_method = TRUE;
 	    proc->block.klass = mod;
@@ -2212,6 +2220,7 @@ method_inspect(VALUE method)
     VALUE str;
     const char *s;
     const char *sharp = "#";
+    VALUE mklass;
 
     TypedData_Get_Struct(method, struct METHOD, &method_data_type, data);
     str = rb_str_buf_new2("#<");
@@ -2219,11 +2228,12 @@ method_inspect(VALUE method)
     rb_str_buf_cat2(str, s);
     rb_str_buf_cat2(str, ": ");
 
-    if (FL_TEST(data->me->klass, FL_SINGLETON)) {
-	VALUE v = rb_ivar_get(data->me->klass, attached);
+    mklass = data->me->klass;
+    if (FL_TEST(mklass, FL_SINGLETON)) {
+	VALUE v = rb_ivar_get(mklass, attached);
 
 	if (data->recv == Qundef) {
-	    rb_str_buf_append(str, rb_inspect(data->me->klass));
+	    rb_str_buf_append(str, rb_inspect(mklass));
 	}
 	else if (data->recv == v) {
 	    rb_str_buf_append(str, rb_inspect(v));
@@ -2239,9 +2249,9 @@ method_inspect(VALUE method)
     }
     else {
 	rb_str_buf_append(str, rb_class_name(data->rclass));
-	if (data->rclass != data->me->klass) {
+	if (data->rclass != mklass) {
 	    rb_str_buf_cat2(str, "(");
-	    rb_str_buf_append(str, rb_class_name(data->me->klass));
+	    rb_str_buf_append(str, rb_class_name(mklass));
 	    rb_str_buf_cat2(str, ")");
 	}
     }

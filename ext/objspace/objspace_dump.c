@@ -20,6 +20,7 @@
 #include "node.h"
 #include "vm_core.h"
 #include "objspace.h"
+#include "internal.h"
 
 static VALUE sym_output, sym_stdout, sym_string, sym_file;
 
@@ -82,7 +83,10 @@ dump_append_string_value(struct dump_config *dc, VALUE obj)
 	    dump_append(dc, "\\r");
 	    break;
 	  default:
-	    dump_append(dc, "%c", c);
+	    if (c <= 0x1f)
+		dump_append(dc, "\\u%04d", c);
+	    else
+		dump_append(dc, "%c", c);
 	}
     }
     dump_append(dc, "\"");
@@ -145,6 +149,8 @@ dump_object(VALUE obj, struct dump_config *dc)
     size_t memsize;
     struct allocation_info *ainfo;
     rb_io_t *fptr;
+    ID flags[RB_OBJ_GC_FLAGS_MAX];
+    size_t n, i;
 
     dc->cur_obj = obj;
     dc->cur_obj_references = 0;
@@ -172,6 +178,8 @@ dump_object(VALUE obj, struct dump_config *dc)
 	    dump_append(dc, ", \"associated\":true");
 	if (is_broken_string(obj))
 	    dump_append(dc, ", \"broken\":true");
+	if (FL_TEST(obj, RSTRING_FSTR))
+	    dump_append(dc, ", \"fstring\":true");
 	if (STR_SHARED_P(obj))
 	    dump_append(dc, ", \"shared\":true");
 	else {
@@ -240,11 +248,20 @@ dump_object(VALUE obj, struct dump_config *dc)
 	dump_append(dc, ", \"file\":\"%s\", \"line\":%lu", ainfo->path, ainfo->line);
 	if (RTEST(ainfo->mid))
 	    dump_append(dc, ", \"method\":\"%s\"", rb_id2name(SYM2ID(ainfo->mid)));
-	dump_append(dc, ", \"generation\":%zu", ainfo->generation);
+	dump_append(dc, ", \"generation\":%"PRIuSIZE, ainfo->generation);
     }
 
     if ((memsize = rb_obj_memsize_of(obj)) > 0)
-	dump_append(dc, ", \"memsize\":%zu", memsize);
+	dump_append(dc, ", \"memsize\":%"PRIuSIZE, memsize);
+
+    if ((n = rb_obj_gc_flags(obj, flags, sizeof(flags))) > 0) {
+	dump_append(dc, ", \"flags\":{");
+	for (i=0; i<n; i++) {
+	    dump_append(dc, "\"%s\":true", rb_id2name(flags[i]));
+	    if (i != n-1) dump_append(dc, ", ");
+	}
+	dump_append(dc, "}");
+    }
 
     dump_append(dc, "}\n");
 }
@@ -276,12 +293,11 @@ root_obj_i(const char *category, VALUE obj, void *data)
     dc->roots++;
 }
 
-#ifndef HAVE_MKSTEMP
-#define dump_output(dc, opts, output, filename) dump_output(dc, opts, output)
-#endif
 static VALUE
-dump_output(struct dump_config *dc, VALUE opts, VALUE output, char *filename)
+dump_output(struct dump_config *dc, VALUE opts, VALUE output, const char *filename)
 {
+    VALUE tmp;
+
     if (RTEST(opts))
 	output = rb_hash_aref(opts, sym_output);
 
@@ -290,17 +306,22 @@ dump_output(struct dump_config *dc, VALUE opts, VALUE output, char *filename)
 	dc->string = Qnil;
     }
     else if (output == sym_file) {
-#ifdef HAVE_MKSTEMP
-	int fd = mkstemp(filename);
-	dc->string = rb_filesystem_str_new_cstr(filename);
-	if (fd == -1) rb_sys_fail_path(dc->string);
-	dc->stream = fdopen(fd, "w");
-#else
-	rb_raise(rb_eArgError, "output to temprary file is not supported");
-#endif
+	rb_io_t *fptr;
+	rb_require("tempfile");
+	tmp = rb_assoc_new(rb_str_new_cstr(filename), rb_str_new_cstr(".json"));
+	tmp = rb_funcallv(rb_path2class("Tempfile"), rb_intern("create"), 1, &tmp);
+      io:
+	dc->string = rb_io_get_write_io(tmp);
+	rb_io_flush(dc->string);
+	GetOpenFile(dc->string, fptr);
+	dc->stream = rb_io_stdio_file(fptr);
     }
     else if (output == sym_string) {
 	dc->string = rb_str_new_cstr("");
+    }
+    else if (!NIL_P(tmp = rb_io_check_io(output))) {
+	output = sym_file;
+	goto io;
     }
     else {
 	rb_raise(rb_eArgError, "wrong output option: %"PRIsVALUE, output);
@@ -315,7 +336,7 @@ dump_result(struct dump_config *dc, VALUE output)
 	return dc->string;
     }
     else if (output == sym_file) {
-	fclose(dc->stream);
+	rb_io_flush(dc->string);
 	return dc->string;
     }
     else {
@@ -326,8 +347,8 @@ dump_result(struct dump_config *dc, VALUE output)
 /*
  *  call-seq:
  *    ObjectSpace.dump(obj[, output: :string]) # => "{ ... }"
- *    ObjectSpace.dump(obj, output: :file) # => "/tmp/rubyobj000000"
- *    ObjectSpace.dump(obj, output: :stdout) # => nil
+ *    ObjectSpace.dump(obj, output: :file)     # => #<File:/tmp/rubyobj20131125-88733-1xkfmpv.json>
+ *    ObjectSpace.dump(obj, output: :stdout)   # => nil
  *
  *  Dump the contents of a ruby object as JSON.
  *
@@ -340,9 +361,7 @@ dump_result(struct dump_config *dc, VALUE output)
 static VALUE
 objspace_dump(int argc, VALUE *argv, VALUE os)
 {
-#ifdef HAVE_MKSTEMP
-    char filename[] = "/tmp/rubyobjXXXXXX";
-#endif
+    static const char filename[] = "rubyobj";
     VALUE obj = Qnil, opts = Qnil, output;
     struct dump_config dc = {0,};
 
@@ -357,9 +376,11 @@ objspace_dump(int argc, VALUE *argv, VALUE os)
 
 /*
  *  call-seq:
- *    ObjectSpace.dump_all([output: :file]) # => "/tmp/rubyheap000000"
+ *    ObjectSpace.dump_all([output: :file]) # => #<File:/tmp/rubyheap20131125-88469-laoj3v.json>
  *    ObjectSpace.dump_all(output: :stdout) # => nil
  *    ObjectSpace.dump_all(output: :string) # => "{...}\n{...}\n..."
+ *    ObjectSpace.dump_all(output:
+ *      File.open('heap.json','w'))         # => #<File:heap.json>
  *
  *  Dump the contents of the ruby heap as JSON.
  *
@@ -372,9 +393,7 @@ objspace_dump(int argc, VALUE *argv, VALUE os)
 static VALUE
 objspace_dump_all(int argc, VALUE *argv, VALUE os)
 {
-#ifdef HAVE_MKSTEMP
-    char filename[] = "/tmp/rubyheapXXXXXX";
-#endif
+    static const char filename[] = "rubyheap";
     VALUE opts = Qnil, output;
     struct dump_config dc = {0,};
 
@@ -406,4 +425,7 @@ Init_objspace_dump(VALUE rb_mObjSpace)
     sym_stdout = ID2SYM(rb_intern("stdout"));
     sym_string = ID2SYM(rb_intern("string"));
     sym_file   = ID2SYM(rb_intern("file"));
+
+    /* force create static IDs */
+    rb_obj_gc_flags(rb_mObjSpace, 0, 0);
 }

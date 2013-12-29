@@ -102,7 +102,6 @@ COMMONOBJS    = array.$(OBJEXT) \
 EXPORTOBJS    = $(DLNOBJ) \
 		localeinit.$(OBJEXT) \
 		loadpath.$(OBJEXT) \
-		sizes.$(OBJEXT) \
 		$(COMMONOBJS)
 
 OBJS          = $(EXPORTOBJS) prelude.$(OBJEXT)
@@ -205,7 +204,7 @@ $(CAPIOUT)/.timestamp: Doxyfile $(PREP)
 Doxyfile: $(srcdir)/template/Doxyfile.tmpl $(PREP) $(srcdir)/tool/generic_erb.rb $(RBCONFIG)
 	$(ECHO) generating $@
 	$(Q) $(MINIRUBY) $(srcdir)/tool/generic_erb.rb -o $@ $(srcdir)/template/Doxyfile.tmpl \
-	--srcdir="$(srcdir)" --miniruby="$(MINIRUBY)"
+	--srcdir="$(srcdir)" --miniruby="$(BASERUBY)"
 
 program: showflags $(PROGRAM)
 wprogram: showflags $(WPROGRAM)
@@ -224,8 +223,8 @@ $(STATIC_RUBY)$(EXEEXT): $(MAINOBJ) $(DLDOBJS) $(EXTOBJS) $(LIBRUBY_A)
 	$(Q)$(RM) $@
 	$(PURIFY) $(CC) $(MAINOBJ) $(DLDOBJS) $(EXTOBJS) $(LIBRUBY_A) $(MAINLIBS) $(EXTLIBS) $(LIBS) $(OUTFLAG)$@ $(LDFLAGS) $(XLDFLAGS)
 
-ruby.imp: $(EXPORTOBJS)
-	$(Q)$(NM) -Pgp $(EXPORTOBJS) | \
+ruby.imp: $(COMMONOBJS)
+	$(Q)$(NM) -Pgp $(COMMONOBJS) | \
 	awk 'BEGIN{print "#!"}; $$2~/^[BDT]$$/&&$$1!~/^(Init_|.*_threadptr_|\.)/{print $$1}' | \
 	sort -u -o $@
 
@@ -881,10 +880,10 @@ INSNS2VMOPT = --srcdir="$(srcdir)"
 
 {$(VPATH)}vm.inc: $(srcdir)/template/vm.inc.tmpl
 
-srcs: {$(VPATH)}parse.c {$(VPATH)}lex.c {$(VPATH)}newline.c {$(VPATH)}id.c {$(VPATH)}sizes.c srcs-ext srcs-enc
+srcs: {$(VPATH)}parse.c {$(VPATH)}lex.c {$(VPATH)}newline.c {$(VPATH)}id.c srcs-ext srcs-enc
 
 EXT_SRCS = $(srcdir)/ext/ripper/ripper.c $(srcdir)/ext/json/parser/parser.c \
-	   $(srcdir)/ext/dl/callback/callback.c
+	   $(srcdir)/ext/dl/callback/callback.c  $(srcdir)/ext/rbconfig/sizeof/sizes.c
 
 srcs-ext: $(EXT_SRCS)
 
@@ -907,11 +906,6 @@ id.c: $(srcdir)/tool/generic_erb.rb $(srcdir)/template/id.c.tmpl $(srcdir)/defs/
 	$(ECHO) generating $@
 	$(Q) $(BASERUBY) $(srcdir)/tool/generic_erb.rb --output=$@ \
 		$(srcdir)/template/id.c.tmpl
-
-sizes.c: $(srcdir)/tool/generic_erb.rb $(srcdir)/template/sizes.c.tmpl $(srcdir)/configure.in
-	$(ECHO) generating $@
-	$(Q) $(BASERUBY) $(srcdir)/tool/generic_erb.rb --output=$@ \
-		$(srcdir)/template/sizes.c.tmpl $(srcdir)/configure.in
 
 node_name.inc: {$(VPATH)}node.h
 	$(ECHO) generating $@
@@ -978,6 +972,12 @@ $(srcdir)/ext/dl/callback/callback.c: $(srcdir)/ext/dl/callback/mkcallback.rb $(
 	$(Q) $(CHDIR) $(@D) && $(exec) $(MAKE) -f depend $(MFLAGS) \
 		Q=$(Q) ECHO=$(ECHO) top_srcdir=../.. srcdir=. VPATH=../.. RUBY="$(BASERUBY)"
 
+$(srcdir)/ext/rbconfig/sizeof/sizes.c: $(srcdir)/ext/rbconfig/sizeof/depend \
+		$(srcdir)/tool/generic_erb.rb $(srcdir)/template/sizes.c.tmpl $(srcdir)/configure.in
+	$(ECHO) generating $@
+	$(Q) $(CHDIR) $(@D) && $(exec) $(MAKE) -f depend $(MFLAGS) \
+		Q=$(Q) ECHO=$(ECHO) top_srcdir=../../.. srcdir=. VPATH=../../.. RUBY="$(BASERUBY)"
+
 ##
 
 run: fake miniruby$(EXEEXT) PHONY
@@ -1015,7 +1015,8 @@ tbench: $(PROGRAM) PHONY
 	            --pattern='bmx_' --directory=$(srcdir)/benchmark $(OPTS)
 
 run.gdb:
-	echo b ruby_debug_breakpoint           > run.gdb
+	echo set breakpoint pending on         > run.gdb
+	echo b ruby_debug_breakpoint          >> run.gdb
 	echo '# handle SIGINT nostop'         >> run.gdb
 	echo '# handle SIGPIPE nostop'        >> run.gdb
 	echo '# b rb_longjmp'                 >> run.gdb

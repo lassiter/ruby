@@ -2316,24 +2316,26 @@ rb_execarg_fixup(VALUE execarg_obj)
         }
         hide_obj(envtbl);
         if (envopts != Qfalse) {
-            st_table *stenv = RHASH_TBL(envtbl);
+	    st_table *stenv = RHASH_TBL_RAW(envtbl);
             long i;
             for (i = 0; i < RARRAY_LEN(envopts); i++) {
                 VALUE pair = RARRAY_AREF(envopts, i);
                 VALUE key = RARRAY_AREF(pair, 0);
                 VALUE val = RARRAY_AREF(pair, 1);
                 if (NIL_P(val)) {
-                    st_data_t stkey = (st_data_t)key;
-                    st_delete(stenv, &stkey, NULL);
+		    st_data_t stkey = (st_data_t)key;
+		    st_delete(stenv, &stkey, NULL);
                 }
                 else {
-                    st_insert(stenv, (st_data_t)key, (st_data_t)val);
+		    st_insert(stenv, (st_data_t)key, (st_data_t)val);
+		    RB_OBJ_WRITTEN(envtbl, Qundef, key);
+		    RB_OBJ_WRITTEN(envtbl, Qundef, val);
                 }
             }
         }
         envp_buf = rb_str_buf_new(0);
         hide_obj(envp_buf);
-        st_foreach(RHASH_TBL(envtbl), fill_envp_buf_i, (st_data_t)envp_buf);
+        st_foreach(RHASH_TBL_RAW(envtbl), fill_envp_buf_i, (st_data_t)envp_buf);
         envp_str = rb_str_buf_new(sizeof(char*) * (RHASH_SIZE(envtbl) + 1));
         hide_obj(envp_str);
         p = RSTRING_PTR(envp_buf);
@@ -2500,28 +2502,16 @@ redirect_dup(int oldfd)
     ttyprintf("dup(%d) => %d\n", oldfd, ret);
     return ret;
 }
-#else
-#define redirect_dup(oldfd) dup(oldfd)
-#endif
 
-#if defined(DEBUG_REDIRECT) || defined(_WIN32)
 static int
 redirect_dup2(int oldfd, int newfd)
 {
     int ret;
     ret = dup2(oldfd, newfd);
-    if (newfd >= 0 && newfd <= 2)
-	SetStdHandle(newfd == 0 ? STD_INPUT_HANDLE : newfd == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE, (HANDLE)rb_w32_get_osfhandle(newfd));
-#if defined(DEBUG_REDIRECT)
     ttyprintf("dup2(%d, %d)\n", oldfd, newfd);
-#endif
     return ret;
 }
-#else
-#define redirect_dup2(oldfd, newfd) dup2((oldfd), (newfd))
-#endif
 
-#if defined(DEBUG_REDIRECT)
 static int
 redirect_close(int fd)
 {
@@ -2541,6 +2531,8 @@ redirect_open(const char *pathname, int flags, mode_t perm)
 }
 
 #else
+#define redirect_dup(oldfd) dup(oldfd)
+#define redirect_dup2(oldfd, newfd) dup2((oldfd), (newfd))
 #define redirect_close(fd) close(fd)
 #define redirect_open(pathname, flags, perm) open((pathname), (flags), (perm))
 #endif
@@ -2898,7 +2890,7 @@ run_exec_rlimit(VALUE ary, struct rb_execarg *sargp, char *errmsg, size_t errmsg
 
 #if !defined(HAVE_FORK)
 static VALUE
-save_env_i(VALUE i, VALUE ary, int argc, VALUE *argv)
+save_env_i(RB_BLOCK_CALL_FUNC_ARGLIST(i, ary))
 {
     rb_ary_push(ary, hide_obj(rb_ary_dup(argv[0])));
     return Qnil;
@@ -6833,6 +6825,9 @@ make_clock_result(struct timetick *ttp,
         numerators[num_numerators++] = 1000;
         return timetick2integer(ttp, numerators, num_numerators, denominators, num_denominators);
     }
+    else if (unit == ID2SYM(rb_intern("second"))) {
+        return timetick2integer(ttp, numerators, num_numerators, denominators, num_denominators);
+    }
     else if (unit == ID2SYM(rb_intern("float_microsecond"))) {
         numerators[num_numerators++] = 1000000;
         return timetick2dblnum(ttp, numerators, num_numerators, denominators, num_denominators);
@@ -6966,6 +6961,7 @@ get_mach_timebase_info(void)
  *  [:float_second] number of seconds as a float (default)
  *  [:float_millisecond] number of milliseconds as a float
  *  [:float_microsecond] number of microseconds as a float
+ *  [:second] number of seconds as an integer
  *  [:millisecond] number of milliseconds as an integer
  *  [:microsecond] number of microseconds as an integer
  *  [:nanosecond] number of nanoseconds as an integer

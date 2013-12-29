@@ -652,7 +652,7 @@ thread_create_core(VALUE thval, VALUE args, VALUE (*fn)(ANYARGS))
     err = native_thread_create(th);
     if (err) {
 	th->status = THREAD_KILLED;
-	rb_raise(rb_eThreadError, "can't create Thread (%d)", err);
+	rb_raise(rb_eThreadError, "can't create Thread: %s", strerror(err));
     }
     st_insert(th->vm->living_threads, thval, (st_data_t) th->thread_id);
     return thval;
@@ -4738,6 +4738,16 @@ rb_thread_shield_destroy(VALUE self)
 /* variables for recursive traversals */
 static ID recursive_key;
 
+extern const struct st_hash_type st_hashtype_num;
+
+static VALUE
+ident_hash_new(void)
+{
+    VALUE hash = rb_hash_new();
+    rb_hash_tbl_raw(hash)->type = &st_hashtype_num;
+    return hash;
+}
+
 /*
  * Returns the current "recursive list" used to detect recursion.
  * This list is a hash table, unique for the current thread and for
@@ -4751,7 +4761,7 @@ recursive_list_access(void)
     VALUE sym = ID2SYM(rb_frame_this_func());
     VALUE list;
     if (NIL_P(hash) || !RB_TYPE_P(hash, T_HASH)) {
-	hash = rb_hash_new();
+	hash = ident_hash_new();
 	rb_thread_local_aset(rb_thread_current(), recursive_key, hash);
 	list = Qnil;
     }
@@ -4759,7 +4769,7 @@ recursive_list_access(void)
 	list = rb_hash_aref(hash, sym);
     }
     if (NIL_P(list) || !RB_TYPE_P(list, T_HASH)) {
-	list = rb_hash_new();
+	list = ident_hash_new();
 	rb_hash_aset(hash, sym, list);
     }
     return list;
@@ -4867,21 +4877,10 @@ struct exec_recursive_params {
 };
 
 static VALUE
-exec_recursive_i(VALUE tag, struct exec_recursive_params *p)
+exec_recursive_i(RB_BLOCK_CALL_FUNC_ARGLIST(tag, data))
 {
-    VALUE result = Qundef;
-    int state;
-
-    recursive_push(p->list, p->objid, p->pairid);
-    PUSH_TAG();
-    if ((state = EXEC_TAG()) == 0) {
-	result = (*p->func)(p->obj, p->arg, FALSE);
-    }
-    POP_TAG();
-    recursive_pop(p->list, p->objid, p->pairid);
-    if (state)
-	JUMP_TAG(state);
-    return result;
+    struct exec_recursive_params *p = (void *)data;
+    return (*p->func)(p->obj, p->arg, FALSE);
 }
 
 /*
@@ -4915,18 +4914,30 @@ exec_recursive(VALUE (*func) (VALUE, VALUE, int), VALUE obj, VALUE pairid, VALUE
 	return (*func)(obj, arg, TRUE);
     }
     else {
+	int state;
+
 	p.func = func;
 
 	if (outermost) {
 	    recursive_push(p.list, ID2SYM(recursive_key), 0);
-	    result = rb_catch_obj(p.list, exec_recursive_i, (VALUE)&p);
+	    recursive_push(p.list, p.objid, p.pairid);
+	    result = rb_catch_protect(p.list, exec_recursive_i, (VALUE)&p, &state);
+	    recursive_pop(p.list, p.objid, p.pairid);
 	    recursive_pop(p.list, ID2SYM(recursive_key), 0);
+	    if (state) JUMP_TAG(state);
 	    if (result == p.list) {
 		result = (*func)(obj, arg, TRUE);
 	    }
 	}
 	else {
-	    result = exec_recursive_i(0, &p);
+	    recursive_push(p.list, p.objid, p.pairid);
+	    PUSH_TAG();
+	    if ((state = EXEC_TAG()) == 0) {
+		result = (*func)(obj, arg, FALSE);
+	    }
+	    POP_TAG();
+	    recursive_pop(p.list, p.objid, p.pairid);
+	    if (state) JUMP_TAG(state);
 	}
     }
     *(volatile struct exec_recursive_params *)&p;

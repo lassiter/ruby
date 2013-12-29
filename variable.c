@@ -49,7 +49,7 @@ fc_path(struct fc_result *fc, ID name)
 {
     VALUE path, tmp;
 
-    path = rb_str_dup(rb_id2str(name));
+    path = rb_id2str(name);
     while (fc) {
 	st_data_t n;
 	if (fc->track == rb_cObject) break;
@@ -176,8 +176,7 @@ classname(VALUE klass, int *permanent)
 		    return Qnil;
 		}
 		if (!st_lookup(RCLASS_IV_TBL(klass), (st_data_t)tmp_classpath, &n)) {
-		    path = rb_str_dup(rb_id2str(cid));
-		    OBJ_FREEZE(path);
+		    path = rb_id2str(cid);
 		    return path;
 		}
 		*permanent = 0;
@@ -276,6 +275,18 @@ rb_class_path_no_cache(VALUE klass)
     VALUE path = rb_tmp_class_path(klass, &permanent, null_cache);
     if (!NIL_P(path)) path = rb_str_dup(path);
     return path;
+}
+
+VALUE
+rb_class_path_cached(VALUE klass)
+{
+    st_table *ivtbl = RCLASS_IV_TBL(klass);
+    st_data_t n;
+
+    if (!ivtbl) return Qnil;
+    if (st_lookup(ivtbl, (st_data_t)classpath, &n)) return (VALUE)n;
+    if (st_lookup(ivtbl, (st_data_t)tmp_classpath, &n)) return (VALUE)n;
+    return Qnil;
 }
 
 void
@@ -936,11 +947,11 @@ generic_ivar_set(VALUE obj, ID id, VALUE val)
 	tbl = st_init_numtable();
 	st_add_direct(generic_iv_tbl, (st_data_t)obj, (st_data_t)tbl);
 	st_add_direct(tbl, (st_data_t)id, (st_data_t)val);
-	if (FL_ABLE(obj)) OBJ_WRITTEN(obj, Qundef, val);
+	if (FL_ABLE(obj)) RB_OBJ_WRITTEN(obj, Qundef, val);
 	return;
     }
     st_insert((st_table *)data, (st_data_t)id, (st_data_t)val);
-    if (FL_ABLE(obj)) OBJ_WRITTEN(obj, data, val);
+    if (FL_ABLE(obj)) RB_OBJ_WRITTEN(obj, data, val);
 }
 
 static VALUE
@@ -1177,7 +1188,7 @@ rb_ivar_set(VALUE obj, ID id, VALUE val)
                 ROBJECT(obj)->as.heap.iv_index_tbl = iv_index_tbl;
             }
         }
-        OBJ_WRITE(obj, &ROBJECT_IVPTR(obj)[index], val);
+        RB_OBJ_WRITE(obj, &ROBJECT_IVPTR(obj)[index], val);
 	break;
       case T_CLASS:
       case T_MODULE:
@@ -1620,7 +1631,7 @@ rb_autoload(VALUE mod, ID id, const char *file)
 	if (!tbl) tbl = RCLASS_IV_TBL(mod) = st_init_numtable();
 	av = (st_data_t)TypedData_Wrap_Struct(0, &autoload_data_type, 0);
 	st_add_direct(tbl, (st_data_t)autoload, av);
-	OBJ_WRITTEN(mod, Qnil, av);
+	RB_OBJ_WRITTEN(mod, Qnil, av);
 	DATA_PTR(av) = tbl = st_init_numtable();
     }
     fn = rb_str_new2(file);
@@ -1969,6 +1980,26 @@ sv_i(st_data_t k, st_data_t v, st_data_t a)
     return ST_CONTINUE;
 }
 
+static int
+rb_local_constants_i(st_data_t const_name, st_data_t const_value, st_data_t ary)
+{
+    rb_ary_push((VALUE)ary, ID2SYM((ID)const_name));
+    return ST_CONTINUE;
+}
+
+static VALUE
+rb_local_constants(VALUE mod)
+{
+    st_table *tbl = RCLASS_CONST_TBL(mod);
+    VALUE ary;
+
+    if (!tbl) return rb_ary_new2(0);
+
+    ary = rb_ary_new2(tbl->num_entries);
+    st_foreach(tbl, rb_local_constants_i, ary);
+    return ary;
+}
+
 void*
 rb_mod_const_at(VALUE mod, void *data)
 {
@@ -2037,7 +2068,6 @@ VALUE
 rb_mod_constants(int argc, VALUE *argv, VALUE mod)
 {
     VALUE inherit;
-    st_table *tbl;
 
     if (argc == 0) {
 	inherit = Qtrue;
@@ -2045,13 +2075,13 @@ rb_mod_constants(int argc, VALUE *argv, VALUE mod)
     else {
 	rb_scan_args(argc, argv, "01", &inherit);
     }
+
     if (RTEST(inherit)) {
-	tbl = rb_mod_const_of(mod, 0);
+	return rb_const_list(rb_mod_const_of(mod, 0));
     }
     else {
-	tbl = rb_mod_const_at(mod, 0);
+	return rb_local_constants(mod);
     }
-    return rb_const_list(tbl);
 }
 
 static int
@@ -2155,7 +2185,7 @@ rb_const_set(VALUE klass, ID id, VALUE val)
 		if (load && (ele = check_autoload_data(load)) && (ele->thread == rb_thread_current())) {
 		    rb_clear_constant_cache();
 
-		    ele->value = val; /* autoload_i is shady */
+		    ele->value = val; /* autoload_i is non-WB-protected */
 		    return;
 		}
 		/* otherwise, allow to override */
@@ -2185,8 +2215,8 @@ rb_const_set(VALUE klass, ID id, VALUE val)
     ce->flag = visibility;
     ce->line = rb_sourceline();
     st_insert(RCLASS_CONST_TBL(klass), (st_data_t)id, (st_data_t)ce);
-    OBJ_WRITE(klass, &ce->value, val);
-    OBJ_WRITE(klass, &ce->file, rb_sourcefilename());
+    RB_OBJ_WRITE(klass, &ce->value, val);
+    RB_OBJ_WRITE(klass, &ce->file, rb_sourcefilename());
 }
 
 void
@@ -2585,14 +2615,14 @@ int
 rb_st_insert_id_and_value(VALUE obj, st_table *tbl, ID key, VALUE value)
 {
     int result = st_insert(tbl, (st_data_t)key, (st_data_t)value);
-    OBJ_WRITTEN(obj, Qundef, value);
+    RB_OBJ_WRITTEN(obj, Qundef, value);
     return result;
 }
 
 static int
 tbl_copy_i(st_data_t key, st_data_t value, st_data_t data)
 {
-    OBJ_WRITTEN((VALUE)data, Qundef, (VALUE)value);
+    RB_OBJ_WRITTEN((VALUE)data, Qundef, (VALUE)value);
     return ST_CONTINUE;
 }
 

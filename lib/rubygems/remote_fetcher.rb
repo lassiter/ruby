@@ -90,7 +90,7 @@ class Gem::RemoteFetcher
     rescue Resolv::ResolvError
       uri
     else
-      URI.parse "#{res.target}#{uri.path}"
+      URI.parse "#{uri.scheme}://#{res.target}#{uri.path}"
     end
   end
 
@@ -292,6 +292,7 @@ class Gem::RemoteFetcher
 
       if update and path then
         open(path, 'wb') do |io|
+          io.flock(File::LOCK_EX)
           io.write data
         end
       end

@@ -14,6 +14,7 @@
 static inline VALUE method_missing(VALUE obj, ID id, int argc, const VALUE *argv, int call_status);
 static inline VALUE vm_yield_with_cref(rb_thread_t *th, int argc, const VALUE *argv, const NODE *cref);
 static inline VALUE vm_yield(rb_thread_t *th, int argc, const VALUE *argv);
+static inline VALUE vm_yield_with_block(rb_thread_t *th, int argc, const VALUE *argv, const rb_block_t *blockargptr);
 static NODE *vm_cref_push(rb_thread_t *th, VALUE klass, int noex, rb_block_t *blockptr);
 static VALUE vm_exec(rb_thread_t *th);
 static void vm_set_eval_stack(rb_thread_t * th, VALUE iseqval, const NODE *cref, rb_block_t *base_block);
@@ -988,6 +989,18 @@ rb_yield_splat(VALUE values)
     return v;
 }
 
+VALUE
+rb_yield_block(VALUE val, VALUE arg, int argc, const VALUE *argv, VALUE blockarg)
+{
+    const rb_block_t *blockptr = 0;
+    if (!NIL_P(blockarg)) {
+	rb_proc_t *blockproc;
+	GetProcPtr(blockarg, blockproc);
+	blockptr = &blockproc->block;
+    }
+    return vm_yield_with_block(GET_THREAD(), argc, argv, blockptr);
+}
+
 static VALUE
 loop_i(void)
 {
@@ -1122,7 +1135,7 @@ struct iter_method_arg {
     VALUE obj;
     ID mid;
     int argc;
-    VALUE *argv;
+    const VALUE *argv;
 };
 
 static VALUE
@@ -1135,7 +1148,7 @@ iterate_method(VALUE obj)
 }
 
 VALUE
-rb_block_call(VALUE obj, ID mid, int argc, VALUE * argv,
+rb_block_call(VALUE obj, ID mid, int argc, const VALUE * argv,
 	      VALUE (*bl_proc) (ANYARGS), VALUE data2)
 {
     struct iter_method_arg arg;
@@ -1157,7 +1170,7 @@ iterate_check_method(VALUE obj)
 }
 
 VALUE
-rb_check_block_call(VALUE obj, ID mid, int argc, VALUE * argv,
+rb_check_block_call(VALUE obj, ID mid, int argc, const VALUE *argv,
 		    VALUE (*bl_proc) (ANYARGS), VALUE data2)
 {
     struct iter_method_arg arg;
@@ -1238,6 +1251,11 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, NODE *const cref_arg, 
 	if ((fname = file) == Qundef) {
 	    fname = rb_usascii_str_new_cstr("(eval)");
 	}
+
+	if (RTEST(fname))
+	    fname = rb_fstring(fname);
+	if (RTEST(absolute_path))
+	    absolute_path = rb_fstring(absolute_path);
 
 	/* make eval iseq */
 	th->parse_in_eval++;
@@ -1528,7 +1546,7 @@ rb_yield_refine_block(VALUE refinement, VALUE refinements)
     }
     cref = vm_cref_push(th, refinement, NOEX_PUBLIC, blockptr);
     cref->flags |= NODE_FL_CREF_PUSHED_BY_EVAL;
-    cref->nd_refinements = refinements;
+    RB_OBJ_WRITE(cref, &cref->nd_refinements, refinements);
 
     return vm_yield_with_cref(th, 0, NULL, cref);
 }
@@ -1816,6 +1834,16 @@ VALUE
 rb_catch_obj(VALUE t, VALUE (*func)(), VALUE data)
 {
     int state;
+    VALUE val = rb_catch_protect(t, (rb_block_call_func *)func, data, &state);
+    if (state)
+	JUMP_TAG(state);
+    return val;
+}
+
+VALUE
+rb_catch_protect(VALUE t, rb_block_call_func *func, VALUE data, int *stateptr)
+{
+    int state;
     volatile VALUE val = Qnil;		/* OK */
     rb_thread_t *th = GET_THREAD();
     rb_control_frame_t *saved_cfp = th->cfp;
@@ -1823,11 +1851,11 @@ rb_catch_obj(VALUE t, VALUE (*func)(), VALUE data)
 
     TH_PUSH_TAG(th);
 
-    th->tag->tag = tag;
+    _tag.tag = tag;
 
     if ((state = TH_EXEC_TAG()) == 0) {
 	/* call with argc=1, argv = [tag], block = Qnil to insure compatibility */
-	val = (*func)(tag, data, 1, &tag, Qnil);
+	val = (*func)(tag, data, 1, (const VALUE *)&tag, Qnil);
     }
     else if (state == TAG_THROW && RNODE(th->errinfo)->u1.value == tag) {
 	th->cfp = saved_cfp;
@@ -1836,8 +1864,8 @@ rb_catch_obj(VALUE t, VALUE (*func)(), VALUE data)
 	state = 0;
     }
     TH_POP_TAG();
-    if (state)
-	JUMP_TAG(state);
+    if (stateptr)
+	*stateptr = state;
 
     return val;
 }

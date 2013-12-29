@@ -126,44 +126,23 @@ NORETURN(static void argument_error(const rb_iseq_t *iseq, int miss_argc, int mi
 static void
 argument_error(const rb_iseq_t *iseq, int miss_argc, int min_argc, int max_argc)
 {
+    rb_thread_t *th = GET_THREAD();
     VALUE exc = rb_arg_error_new(miss_argc, min_argc, max_argc);
-    VALUE bt = rb_make_backtrace();
-    VALUE err_line = 0;
+    VALUE at;
 
     if (iseq) {
-	int line_no = FIX2INT(rb_iseq_first_lineno(iseq->self));
-
-	err_line = rb_sprintf("%s:%d:in `%s'",
-			      RSTRING_PTR(iseq->location.path),
-			      line_no, RSTRING_PTR(iseq->location.label));
-	rb_funcall(bt, rb_intern("unshift"), 1, err_line);
+	vm_push_frame(th, iseq, VM_FRAME_MAGIC_METHOD, Qnil /* self */, Qnil /* klass */, Qnil /* specval*/,
+		      iseq->iseq_encoded, th->cfp->sp, 0 /* local_size */, 0 /* me */, 0 /* stack_max */);
+	at = rb_vm_backtrace_object();
+	vm_pop_frame(th);
+    }
+    else {
+	at = rb_vm_backtrace_object();
     }
 
-    rb_funcall(exc, rb_intern("set_backtrace"), 1, bt);
+    rb_iv_set(exc, "bt_locations", at);
+    rb_funcall(exc, rb_intern("set_backtrace"), 1, at);
     rb_exc_raise(exc);
-}
-
-NORETURN(static void keyword_error(const char *error, VALUE keys));
-static void
-keyword_error(const char *error, VALUE keys)
-{
-    const char *msg = RARRAY_LEN(keys) == 1 ? "" : "s";
-    keys = rb_ary_join(keys, rb_usascii_str_new2(", "));
-    rb_raise(rb_eArgError, "%s keyword%s: %"PRIsVALUE, error, msg, keys);
-}
-
-NORETURN(static void unknown_keyword_error(const rb_iseq_t *iseq, VALUE hash));
-static void
-unknown_keyword_error(const rb_iseq_t *iseq, VALUE hash)
-{
-    VALUE keys;
-    int i;
-    for (i = 0; i < iseq->arg_keywords; i++) {
-	rb_hash_delete(hash, ID2SYM(iseq->arg_keyword_table[i]));
-    }
-    keys = rb_funcall(hash, rb_intern("keys"), 0, 0);
-    if (!RB_TYPE_P(keys, T_ARRAY)) rb_raise(rb_eArgError, "unknown keyword");
-    keyword_error("unknown", keys);
 }
 
 void
@@ -308,10 +287,10 @@ vm_cref_push(rb_thread_t *th, VALUE klass, int noex, rb_block_t *blockptr)
     cref->nd_visi = noex;
 
     if (blockptr) {
-	cref->nd_next = vm_get_cref0(blockptr->iseq, blockptr->ep);
+	RB_OBJ_WRITE(cref, &cref->nd_next, vm_get_cref0(blockptr->iseq, blockptr->ep));
     }
     else if (cfp) {
-	cref->nd_next = vm_get_cref0(cfp->iseq, cfp->ep);
+	RB_OBJ_WRITE(cref, &cref->nd_next, vm_get_cref0(cfp->iseq, cfp->ep));
     }
     /* TODO: why cref->nd_next is 1? */
     if (cref->nd_next && cref->nd_next != (void *) 1 &&
@@ -510,7 +489,7 @@ vm_getivar(VALUE obj, ID id, IC ic, rb_call_info_t *ci, int is_attr)
 	VALUE val = Qundef;
 	VALUE klass = RBASIC(obj)->klass;
 
-	if (LIKELY((!is_attr && ic->ic_serial == RCLASS_EXT(klass)->class_serial) ||
+	if (LIKELY((!is_attr && ic->ic_serial == RCLASS_SERIAL(klass)) ||
 		   (is_attr && ci->aux.index > 0))) {
 	    long index = !is_attr ? (long)ic->ic_value.index : ci->aux.index - 1;
 	    long len = ROBJECT_NUMIV(obj);
@@ -533,7 +512,7 @@ vm_getivar(VALUE obj, ID id, IC ic, rb_call_info_t *ci, int is_attr)
 		    }
 		    if (!is_attr) {
 			ic->ic_value.index = index;
-			ic->ic_serial = RCLASS_EXT(klass)->class_serial;
+			ic->ic_serial = RCLASS_SERIAL(klass);
 		    }
 		    else { /* call_info */
 			ci->aux.index = index + 1;
@@ -565,14 +544,14 @@ vm_setivar(VALUE obj, ID id, VALUE val, IC ic, rb_call_info_t *ci, int is_attr)
 	st_data_t index;
 
 	if (LIKELY(
-	    (!is_attr && ic->ic_serial == RCLASS_EXT(klass)->class_serial) ||
+	    (!is_attr && ic->ic_serial == RCLASS_SERIAL(klass)) ||
 	    (is_attr && ci->aux.index > 0))) {
 	    long index = !is_attr ? (long)ic->ic_value.index : ci->aux.index-1;
 	    long len = ROBJECT_NUMIV(obj);
 	    VALUE *ptr = ROBJECT_IVPTR(obj);
 
 	    if (index < len) {
-		OBJ_WRITE(obj, &ptr[index], val);
+		RB_OBJ_WRITE(obj, &ptr[index], val);
 		return val; /* inline cache hit */
 	    }
 	}
@@ -582,7 +561,7 @@ vm_setivar(VALUE obj, ID id, VALUE val, IC ic, rb_call_info_t *ci, int is_attr)
 	    if (iv_index_tbl && st_lookup(iv_index_tbl, (st_data_t)id, &index)) {
 		if (!is_attr) {
 		    ic->ic_value.index = index;
-		    ic->ic_serial = RCLASS_EXT(klass)->class_serial;
+		    ic->ic_serial = RCLASS_SERIAL(klass);
 		}
 		else {
 		    ci->aux.index = index + 1;
@@ -846,7 +825,7 @@ vm_search_method(rb_call_info_t *ci, VALUE recv)
     VALUE klass = CLASS_OF(recv);
 
 #if OPT_INLINE_METHOD_CACHE
-    if (LIKELY(GET_METHOD_SERIAL() == ci->method_serial && RCLASS_EXT(klass)->class_serial == ci->class_serial)) {
+    if (LIKELY(GET_GLOBAL_METHOD_STATE() == ci->method_state && RCLASS_SERIAL(klass) == ci->class_serial)) {
 	/* cache hit! */
 	return;
     }
@@ -856,8 +835,8 @@ vm_search_method(rb_call_info_t *ci, VALUE recv)
     ci->klass = klass;
     ci->call = vm_call_general;
 #if OPT_INLINE_METHOD_CACHE
-    ci->method_serial = GET_METHOD_SERIAL();
-    ci->class_serial = RCLASS_EXT(klass)->class_serial;
+    ci->method_state = GET_GLOBAL_METHOD_STATE();
+    ci->class_serial = RCLASS_SERIAL(klass);
 #endif
 }
 
@@ -924,7 +903,7 @@ rb_equal_opt(VALUE obj1, VALUE obj2)
     rb_call_info_t ci;
     ci.mid = idEq;
     ci.klass = 0;
-    ci.method_serial = 0;
+    ci.method_state = 0;
     ci.me = NULL;
     ci.defined_class = 0;
     return opt_eq_func(obj1, obj2, &ci);
@@ -947,7 +926,13 @@ check_match(VALUE pattern, VALUE target, enum vm_check_match_type type)
       case VM_CHECKMATCH_TYPE_CASE: {
 	VALUE defined_class;
 	rb_method_entry_t *me = rb_method_entry_with_refinements(CLASS_OF(pattern), idEqq, &defined_class);
-	return vm_call0(GET_THREAD(), pattern, idEqq, 1, &target, me, defined_class);
+	if (me) {
+	  return vm_call0(GET_THREAD(), pattern, idEqq, 1, &target, me, defined_class);
+	}
+	else {
+	  /* fallback to funcall (e.g. method_missing) */
+	  return rb_funcall2(pattern, idEqq, 1, &target);
+	}
       }
       default:
 	rb_bug("check_match: unreachable");
@@ -1081,78 +1066,26 @@ vm_caller_setup_args(const rb_thread_t *th, rb_control_frame_t *cfp, rb_call_inf
     }
 }
 
-static int
-separate_symbol(st_data_t key, st_data_t value, st_data_t arg)
-{
-    VALUE *kwdhash = (VALUE *)arg;
-
-    if (!SYMBOL_P(key)) kwdhash++;
-    if (!*kwdhash) *kwdhash = rb_hash_new();
-    rb_hash_aset(*kwdhash, (VALUE)key, (VALUE)value);
-    return ST_CONTINUE;
-}
-
-static VALUE
-extract_keywords(VALUE *orighash)
-{
-    VALUE parthash[2] = {0, 0};
-    VALUE hash = *orighash;
-
-    if (RHASH_EMPTY_P(hash)) {
-	*orighash = 0;
-	return hash;
-    }
-    st_foreach(rb_hash_tbl_raw(hash), separate_symbol, (st_data_t)&parthash);
-    *orighash = parthash[1];
-    return parthash[0];
-}
-
 static inline int
 vm_callee_setup_keyword_arg(const rb_iseq_t *iseq, int argc, int m, VALUE *orig_argv, VALUE *kwd)
 {
-    VALUE keyword_hash, orig_hash;
-    int i, j;
+    VALUE keyword_hash = 0, orig_hash;
+    int optional = iseq->arg_keywords - iseq->arg_keyword_required;
 
     if (argc > m &&
 	!NIL_P(orig_hash = rb_check_hash_type(orig_argv[argc-1])) &&
-	(keyword_hash = extract_keywords(&orig_hash)) != 0) {
+	(keyword_hash = rb_extract_keywords(&orig_hash)) != 0) {
 	if (!orig_hash) {
 	    argc--;
 	}
 	else {
 	    orig_argv[argc-1] = orig_hash;
 	}
-	i = 0;
-	if (iseq->arg_keyword_required) {
-	    VALUE missing = Qnil;
-	    for (; i < iseq->arg_keyword_required; i++) {
-		VALUE keyword = ID2SYM(iseq->arg_keyword_table[i]);
-		if (st_lookup(rb_hash_tbl_raw(keyword_hash), (st_data_t)keyword, 0))
-		    continue;
-		if (NIL_P(missing)) missing = rb_ary_tmp_new(1);
-		rb_ary_push(missing, keyword);
-	    }
-	    if (!NIL_P(missing)) {
-		keyword_error("missing", missing);
-	    }
-	}
-	if (iseq->arg_keyword_check) {
-	    for (j = i; i < iseq->arg_keywords; i++) {
-		if (st_lookup(rb_hash_tbl_raw(keyword_hash), ID2SYM(iseq->arg_keyword_table[i]), 0)) j++;
-	    }
-	    if (RHASH_SIZE(keyword_hash) > (unsigned int)j) {
-		unknown_keyword_error(iseq, keyword_hash);
-	    }
-	}
     }
-    else if (iseq->arg_keyword_required) {
-	VALUE missing = rb_ary_tmp_new(iseq->arg_keyword_required);
-	for (i = 0; i < iseq->arg_keyword_required; i++) {
-	    rb_ary_push(missing, ID2SYM(iseq->arg_keyword_table[i]));
-	}
-	keyword_error("missing", missing);
-    }
-    else {
+    rb_get_kwargs(keyword_hash, iseq->arg_keyword_table, iseq->arg_keyword_required,
+		  (iseq->arg_keyword_check ? optional : -1-optional),
+		  NULL);
+    if (!keyword_hash) {
 	keyword_hash = rb_hash_new();
     }
 
@@ -1178,7 +1111,7 @@ vm_callee_setup_arg_complex(rb_thread_t *th, rb_call_info_t *ci, const rb_iseq_t
 
     /* keyword argument */
     if (iseq->arg_keyword != -1) {
-	argc = vm_callee_setup_keyword_arg(iseq, argc, m, orig_argv, &keyword_hash);
+	argc = vm_callee_setup_keyword_arg(iseq, argc, min, orig_argv, &keyword_hash);
     }
 
     /* mandatory */
@@ -1297,13 +1230,13 @@ vm_call_iseq_setup_2(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *c
 static inline VALUE
 vm_call_iseq_setup_normal(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 {
-    int i;
+    int i, local_size;
     VALUE *argv = cfp->sp - ci->argc;
     rb_iseq_t *iseq = ci->me->def->body.iseq;
     VALUE *sp = argv + iseq->arg_size;
 
-    /* clear local variables */
-    for (i = 0; i < iseq->local_size - iseq->arg_size; i++) {
+    /* clear local variables (arg_size...local_size) */
+    for (i = iseq->arg_size, local_size = iseq->local_size; i < local_size; i++) {
 	*sp++ = Qnil;
     }
 
@@ -2233,6 +2166,7 @@ vm_yield_setup_block_args(rb_thread_t *th, const rb_iseq_t * iseq,
     int i;
     int argc = orig_argc;
     const int m = iseq->argc;
+    const int min = m + iseq->arg_post_len;
     VALUE ary, arg0;
     VALUE keyword_hash = Qnil;
     int opt_pc = 0;
@@ -2246,7 +2180,7 @@ vm_yield_setup_block_args(rb_thread_t *th, const rb_iseq_t * iseq,
      */
     arg0 = argv[0];
     if (!(iseq->arg_simple & 0x02) &&                           /* exclude {|a|} */
-	((m + iseq->arg_post_len) > 0 ||			/* positional arguments exist */
+	(min > 0 ||	                                        /* positional arguments exist */
 	 iseq->arg_opts > 2 ||					/* multiple optional arguments exist */
 	 iseq->arg_keyword != -1 ||				/* any keyword arguments */
 	 0) &&
@@ -2269,7 +2203,7 @@ vm_yield_setup_block_args(rb_thread_t *th, const rb_iseq_t * iseq,
 
     /* keyword argument */
     if (iseq->arg_keyword != -1) {
-	argc = vm_callee_setup_keyword_arg(iseq, argc, m, argv, &keyword_hash);
+	argc = vm_callee_setup_keyword_arg(iseq, argc, min, argv, &keyword_hash);
     }
 
     for (i=argc; i<m; i++) {

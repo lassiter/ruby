@@ -64,7 +64,7 @@ class RubyVM
     def sp_increase_c_expr
       if(pops.any?{|t, v| v == '...'} ||
          rets.any?{|t, v| v == '...'})
-        # user definision
+        # user definition
         raise "no sp increase definition" if @sp_inc.nil?
         ret = "int inc = 0;\n"
 
@@ -816,7 +816,7 @@ class RubyVM
       commit  "  POPN(#{@popn});" if @popn > 0
     end
 
-    def make_hader_debug insn
+    def make_header_debug insn
       comment "  /* for debug */"
       commit  "  DEBUG_ENTER_INSN(\"#{insn.name}\");"
     end
@@ -869,7 +869,7 @@ class RubyVM
       make_header_stack_pops insn
       make_header_temporary_vars insn
       #
-      make_hader_debug insn
+      make_header_debug insn
       make_header_pc insn
       make_header_popn insn
       make_header_defines insn

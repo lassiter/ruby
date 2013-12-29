@@ -40,6 +40,13 @@ class Gem::Commands::InstallCommand < Gem::Command
         File.exist? file
       end unless v
 
+      unless v then
+        message = v ? v : "(tried #{Gem::GEM_DEP_FILES.join ', '})"
+
+        raise OptionParser::InvalidArgument,
+                "cannot find gem dependencies file #{message}"
+      end
+
       o[:gemdeps] = v
     end
 
@@ -56,7 +63,13 @@ class Gem::Commands::InstallCommand < Gem::Command
       o[:install_as_default] = v
     end
 
-    @installed_specs = nil
+    add_option(:"Install/Update", '--explain',
+               'Rather than install the gems, indicate which would',
+               'be installed') do |v,o|
+      o[:explain] = v
+    end
+
+    @installed_specs = []
   end
 
   def arguments # :nodoc:
@@ -185,12 +198,55 @@ to write the specification by hand.  For example:
     return if options[:conservative] and
       not Gem::Dependency.new(name, version).matching_specs.empty?
 
-    inst = Gem::DependencyInstaller.new options
-    inst.install name, Gem::Requirement.create(version)
+    req = Gem::Requirement.create(version)
 
-    @installed_specs.push(*inst.installed_gems)
+    if options[:ignore_dependencies] then
+      install_gem_without_dependencies name, req
+    else
+      inst = Gem::DependencyInstaller.new options
 
-    show_install_errors inst.errors
+      if options[:explain]
+        request_set = inst.resolve_dependencies name, req
+
+        puts "Gems to install:"
+
+        request_set.specs.map { |s| s.full_name }.sort.each do |s|
+          puts "  #{s}"
+        end
+
+        return
+      else
+        inst.install name, req
+      end
+
+      @installed_specs.push(*inst.installed_gems)
+
+      show_install_errors inst.errors
+    end
+  end
+
+  def install_gem_without_dependencies name, req # :nodoc:
+    gem = nil
+
+    if remote? then
+      dependency = Gem::Dependency.new name, req
+      dependency.prerelease = options[:prerelease]
+
+      fetcher = Gem::RemoteFetcher.fetcher
+      gem = fetcher.download_to_cache dependency
+    end
+
+    if local? and not gem then
+      source = Gem::Source::Local.new
+      spec = source.find_gem name, req
+
+      gem = source.download spec
+    end
+
+    inst = Gem::Installer.new gem, options
+    inst.install
+
+    @installed_specs.push(inst.spec)
   end
 
   def install_gems # :nodoc:
