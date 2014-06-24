@@ -1196,23 +1196,33 @@ static VALUE vm_call_iseq_setup_2(rb_thread_t *th, rb_control_frame_t *cfp, rb_c
 static inline VALUE vm_call_iseq_setup_normal(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci);
 static inline VALUE vm_call_iseq_setup_tailcall(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci);
 
-#define VM_CALLEE_SETUP_ARG(th, ci, iseq, argv, is_lambda) \
-    if (LIKELY((iseq)->arg_simple & 0x01)) { \
-	/* simple check */ \
-	if ((ci)->argc != (iseq)->argc) { \
-	    argument_error((iseq), ((ci)->argc), (iseq)->argc, (iseq)->argc); \
-	} \
-	(ci)->aux.opt_pc = 0; \
-	CI_SET_FASTPATH((ci), UNLIKELY((ci)->flag & VM_CALL_TAILCALL) ? vm_call_iseq_setup_tailcall : vm_call_iseq_setup_normal, !(is_lambda) && !((ci)->me->flag & NOEX_PROTECTED)); \
-    } \
-    else { \
-	(ci)->aux.opt_pc = vm_callee_setup_arg_complex((th), (ci), (iseq), (argv)); \
+static inline void
+vm_callee_setup_arg(rb_thread_t *th, rb_call_info_t *ci, const rb_iseq_t *iseq,
+		    VALUE *argv, int is_lambda)
+{
+    if (LIKELY(iseq->arg_simple & 0x01)) {
+	/* simple check */
+	if (ci->argc != iseq->argc) {
+	    argument_error(iseq, ci->argc, iseq->argc, iseq->argc);
+	}
+	ci->aux.opt_pc = 0;
+	CI_SET_FASTPATH(ci,
+			(UNLIKELY(ci->flag & VM_CALL_TAILCALL) ?
+			 vm_call_iseq_setup_tailcall :
+			 vm_call_iseq_setup_normal),
+			(!is_lambda &&
+			 !(ci->flag & VM_CALL_ARGS_SPLAT) && /* argc may differ for each calls */
+			 !(ci->me->flag & NOEX_PROTECTED)));
     }
+    else {
+	ci->aux.opt_pc = vm_callee_setup_arg_complex(th, ci, iseq, argv);
+    }
+}
 
 static VALUE
 vm_call_iseq_setup(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 {
-    VM_CALLEE_SETUP_ARG(th, ci, ci->me->def->body.iseq, cfp->sp - ci->argc, 0);
+    vm_callee_setup_arg(th, ci, ci->me->def->body.iseq, cfp->sp - ci->argc, 0);
     return vm_call_iseq_setup_2(th, cfp, ci);
 }
 
@@ -1587,7 +1597,7 @@ vm_call_bmethod_body(rb_thread_t *th, rb_call_info_t *ci, const VALUE *argv)
     EXEC_EVENT_HOOK(th, RUBY_EVENT_CALL, ci->recv, ci->me->called_id, ci->me->klass, Qnil);
 
     /* control block frame */
-    th->passed_me = ci->me;
+    th->passed_bmethod_me = ci->me;
     GetProcPtr(ci->me->def->body.proc, proc);
     val = vm_invoke_proc(th, proc, ci->recv, ci->defined_class, ci->argc, argv, ci->blockptr);
 
@@ -2002,6 +2012,7 @@ vm_search_super_method(rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_call_inf
     }
 
     if (BUILTIN_TYPE(current_defined_class) != T_MODULE &&
+	BUILTIN_TYPE(current_defined_class) != T_ICLASS && /* bound UnboundMethod */
 	!FL_TEST(current_defined_class, RMODULE_INCLUDED_INTO_REFINEMENT) &&
 	!rb_obj_is_kind_of(ci->recv, current_defined_class)) {
 	VALUE m = RB_TYPE_P(current_defined_class, T_ICLASS) ?
@@ -2009,8 +2020,8 @@ vm_search_super_method(rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_call_inf
 
 	rb_raise(rb_eTypeError,
 		 "self has wrong type to call super in this context: "
-		 "%s (expected %s)",
-		 rb_obj_classname(ci->recv), rb_class2name(m));
+		 "%"PRIsVALUE" (expected %"PRIsVALUE")",
+		 rb_obj_class(ci->recv), m);
     }
 
     switch (vm_search_superclass(GET_CFP(), iseq, sigval, ci)) {
@@ -2299,7 +2310,7 @@ vm_yield_setup_args(rb_thread_t * const th, const rb_iseq_t *iseq,
 	ci_entry.flag = 0;
 	ci_entry.argc = argc;
 	ci_entry.blockptr = (rb_block_t *)blockptr;
-	VM_CALLEE_SETUP_ARG(th, &ci_entry, iseq, argv, 1);
+	vm_callee_setup_arg(th, &ci_entry, iseq, argv, 1);
 	return ci_entry.aux.opt_pc;
     }
     else {

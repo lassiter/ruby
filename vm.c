@@ -717,13 +717,24 @@ invoke_block_from_c(rb_thread_t *th, const rb_block_t *block,
 	opt_pc = vm_yield_setup_args(th, iseq, argc, cfp->sp, blockptr,
 				     type == VM_FRAME_MAGIC_LAMBDA);
 
-	vm_push_frame(th, iseq, type | VM_FRAME_FLAG_FINISH,
-		      self, defined_class,
-		      VM_ENVVAL_PREV_EP_PTR(block->ep),
-		      iseq->iseq_encoded + opt_pc,
-		      cfp->sp + arg_size, iseq->local_size - arg_size,
-		      th->passed_me, iseq->stack_max);
-	th->passed_me = 0;
+	if (th->passed_bmethod_me != 0) {
+	    /* bmethod */
+	    vm_push_frame(th, iseq, type | VM_FRAME_FLAG_FINISH | VM_FRAME_FLAG_BMETHOD,
+			  self, defined_class,
+			  VM_ENVVAL_PREV_EP_PTR(block->ep),
+			  iseq->iseq_encoded + opt_pc,
+			  cfp->sp + arg_size, iseq->local_size - arg_size,
+			  th->passed_bmethod_me, iseq->stack_max);
+	    th->passed_bmethod_me = 0;
+	}
+	else {
+	    vm_push_frame(th, iseq, type | VM_FRAME_FLAG_FINISH,
+			  self, defined_class,
+			  VM_ENVVAL_PREV_EP_PTR(block->ep),
+			  iseq->iseq_encoded + opt_pc,
+			  cfp->sp + arg_size, iseq->local_size - arg_size,
+			  0, iseq->stack_max);
+	}
 
 	if (cref) {
 	    th->cfp->ep[-1] = (VALUE)cref;
@@ -1512,7 +1523,13 @@ vm_exec(rb_thread_t *th)
 		break;
 	      case VM_FRAME_MAGIC_BLOCK:
 	      case VM_FRAME_MAGIC_LAMBDA:
-		EXEC_EVENT_HOOK_AND_POP_FRAME(th, RUBY_EVENT_B_RETURN, th->cfp->self, 0, 0, Qnil);
+		if (VM_FRAME_TYPE_BMETHOD_P(th->cfp)) {
+		    EXEC_EVENT_HOOK(th, RUBY_EVENT_B_RETURN, th->cfp->self, 0, 0, Qnil);
+		    EXEC_EVENT_HOOK_AND_POP_FRAME(th, RUBY_EVENT_RETURN, th->cfp->self, th->cfp->me->called_id, th->cfp->me->klass, Qnil);
+		}
+		else {
+		    EXEC_EVENT_HOOK_AND_POP_FRAME(th, RUBY_EVENT_B_RETURN, th->cfp->self, 0, 0, Qnil);
+		}
 		break;
 	      case VM_FRAME_MAGIC_CLASS:
 		EXEC_EVENT_HOOK_AND_POP_FRAME(th, RUBY_EVENT_END, th->cfp->self, 0, 0, Qnil);
@@ -1966,11 +1983,11 @@ rb_thread_mark(void *ptr)
 
 	rb_mark_tbl(th->local_storage);
 
-	if (GET_THREAD() != th && th->machine_stack_start && th->machine_stack_end) {
+	if (GET_THREAD() != th && th->machine.stack_start && th->machine.stack_end) {
 	    rb_gc_mark_machine_stack(th);
-	    rb_gc_mark_locations((VALUE *)&th->machine_regs,
-				 (VALUE *)(&th->machine_regs) +
-				 sizeof(th->machine_regs) / sizeof(VALUE));
+	    rb_gc_mark_locations((VALUE *)&th->machine.regs,
+				 (VALUE *)(&th->machine.regs) +
+				 sizeof(th->machine.regs) / sizeof(VALUE));
 	}
 
 	rb_vm_trace_mark_event_hooks(&th->event_hooks);

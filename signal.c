@@ -628,21 +628,49 @@ rb_get_next_signal(void)
 
 
 #if defined(USE_SIGALTSTACK) || defined(_WIN32)
+NORETURN(void ruby_thread_stack_overflow(rb_thread_t *th));
+#if defined(HAVE_UCONTEXT_H) && defined __linux__ && (defined __i386__ || defined __x86_64__)
+# define USE_UCONTEXT_REG 1
+#endif
+#ifdef USE_UCONTEXT_REG
+static void
+check_stack_overflow(const uintptr_t addr, const ucontext_t *ctx)
+{
+# if defined REG_RSP
+    const greg_t sp = ctx->uc_mcontext.gregs[REG_RSP];
+# else
+    const greg_t sp = ctx->uc_mcontext.gregs[REG_ESP];
+# endif
+    enum {pagesize = 4096};
+    const uintptr_t sp_page = (uintptr_t)sp / pagesize;
+    const uintptr_t fault_page = addr / pagesize;
+
+    /* SP in ucontext is not decremented yet when `push` failed, so
+     * the fault page can be the next. */
+    if (sp_page == fault_page || sp_page == fault_page + 1) {
+	ruby_thread_stack_overflow(GET_THREAD());
+    }
+}
+#else
 static void
 check_stack_overflow(const void *addr)
 {
     int ruby_stack_overflowed_p(const rb_thread_t *, const void *);
-    NORETURN(void ruby_thread_stack_overflow(rb_thread_t *th));
     rb_thread_t *th = GET_THREAD();
     if (ruby_stack_overflowed_p(th, addr)) {
 	ruby_thread_stack_overflow(th);
     }
 }
+#endif
 #ifdef _WIN32
 #define CHECK_STACK_OVERFLOW() check_stack_overflow(0)
 #else
 #define FAULT_ADDRESS info->si_addr
-#define CHECK_STACK_OVERFLOW() check_stack_overflow(FAULT_ADDRESS)
+# ifdef USE_UCONTEXT_REG
+# define CHECK_STACK_OVERFLOW() check_stack_overflow((uintptr_t)FAULT_ADDRESS, ctx)
+#else
+# define CHECK_STACK_OVERFLOW() check_stack_overflow(FAULT_ADDRESS)
+#endif
 #define MESSAGE_FAULT_ADDRESS " at %p", FAULT_ADDRESS
 #endif
 #else
@@ -711,6 +739,15 @@ signal_exec(VALUE cmd, int safe, int sig)
     rb_thread_t *cur_th = GET_THREAD();
     volatile unsigned long old_interrupt_mask = cur_th->interrupt_mask;
     int state;
+
+    /*
+     * workaround the following race:
+     * 1. signal_enque queues signal for execution
+     * 2. user calls trap(sig, "IGNORE"), setting SIG_IGN
+     * 3. rb_signal_exec runs on queued signal
+     */
+    if (IMMEDIATE_P(cmd))
+	return;
 
     cur_th->interrupt_mask |= TRAP_INTERRUPT_MASK;
     TH_PUSH_TAG(cur_th);
@@ -863,7 +900,7 @@ trap_handler(VALUE *cmd, int sig)
 		if (strncmp(RSTRING_PTR(command), "SIG_IGN", 7) == 0) {
 sig_ign:
                     func = SIG_IGN;
-                    *cmd = 0;
+                    *cmd = Qtrue;
 		}
 		else if (strncmp(RSTRING_PTR(command), "SIG_DFL", 7) == 0) {
 sig_dfl:
@@ -944,9 +981,12 @@ trap(int sig, sighandler_t func, VALUE command)
     oldcmd = vm->trap_list[sig].cmd;
     switch (oldcmd) {
       case 0:
+      case Qtrue:
 	if (oldfunc == SIG_IGN) oldcmd = rb_str_new2("IGNORE");
 	else if (oldfunc == sighandler) oldcmd = rb_str_new2("DEFAULT");
 	else oldcmd = Qnil;
+	break;
+      case Qnil:
 	break;
       case Qundef:
 	oldcmd = rb_str_new2("EXIT");

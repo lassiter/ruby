@@ -343,6 +343,11 @@ rb_ary_modify(VALUE ary)
             ARY_SET_CAPA(ary, len);
             ARY_SET_PTR(ary, ptr);
         }
+
+	/* TODO: age2 promotion, OBJ_PROMOTED() checks not infant. */
+	if (OBJ_PROMOTED(ary) && !OBJ_PROMOTED(shared)) {
+	    rb_gc_writebarrier_remember_promoted(ary);
+	}
     }
 }
 
@@ -893,19 +898,6 @@ rb_ary_push(VALUE ary, VALUE item)
     long idx = RARRAY_LEN(ary);
 
     ary_ensure_room_for_push(ary, 1);
-    RARRAY_ASET(ary, idx, item);
-    ARY_SET_LEN(ary, idx + 1);
-    return ary;
-}
-
-static VALUE
-rb_ary_push_1(VALUE ary, VALUE item)
-{
-    long idx = RARRAY_LEN(ary);
-
-    if (idx >= ARY_CAPA(ary)) {
-	ary_double_capa(ary, idx);
-    }
     RARRAY_ASET(ary, idx, item);
     ARY_SET_LEN(ary, idx + 1);
     return ary;
@@ -3077,7 +3069,7 @@ ary_reject(VALUE orig, VALUE result)
     for (i = 0; i < RARRAY_LEN(orig); i++) {
 	VALUE v = RARRAY_AREF(orig, i);
 	if (!RTEST(rb_yield(v))) {
-	    rb_ary_push_1(result, v);
+	    rb_ary_push(result, v);
 	}
     }
     return result;

@@ -770,6 +770,8 @@ if test "$GCC:${warnflags+set}:no" = yes::no; then
     rb_cv_warnflags="$warnflags"
     warnflags=
 fi
+RUBY_TRY_CFLAGS(-Qunused-arguments, [RUBY_APPEND_OPTIONS(rb_cv_wsuppress_flags, -Qunused-arguments)])
+
 if test "$GCC" = yes; then
     # -D_FORTIFY_SOURCE
     # When defined _FORTIFY_SOURCE, glibc enables some additional sanity
@@ -860,7 +862,7 @@ if test "$GCC" = yes; then
 	[*-darwin*], [
 	    # doesn't seem necessary on Mac OS X
 	],
-	[[i[4-6]86*]], [
+	[[i[4-6]86*|i386*mingw*]], [
 	    RUBY_TRY_CFLAGS(-msse2 -mfpmath=sse, [
 		RUBY_APPEND_OPTION(XCFLAGS, -msse2 -mfpmath=sse)
 	    ])
@@ -1269,7 +1271,8 @@ RUBY_CHECK_SIZEOF(clock_t, [], [], [@%:@include <time.h>])
 AC_DEFUN([RUBY_CHECK_PRINTF_PREFIX], [
 AC_CACHE_CHECK([for printf prefix for $1], [rb_cv_pri_prefix_]AS_TR_SH($1),[
     [rb_cv_pri_prefix_]AS_TR_SH($1)=[NONE]
-    RUBY_WERROR_FLAG(for pri in $2; do
+    RUBY_WERROR_FLAG(RUBY_APPEND_OPTIONS(CFLAGS, $rb_cv_wsuppress_flags)
+    for pri in $2; do
         AC_TRY_COMPILE(
             [@%:@include <stdio.h>
 	    @%:@include <stddef.h>
@@ -1548,8 +1551,8 @@ if test "$GCC" = yes; then
 
     AC_CACHE_CHECK(for __builtin_unreachable, rb_cv_func___builtin_unreachable,
     [RUBY_WERROR_FLAG(
-    [AC_TRY_LINK([@%:@include <stdlib.h>],
-	[exit(0); __builtin_unreachable();],
+    [AC_TRY_LINK([volatile int zero;],
+	[if (zero) __builtin_unreachable();],
 	[rb_cv_func___builtin_unreachable=yes],
 	[rb_cv_func___builtin_unreachable=no])
     ])
@@ -2453,6 +2456,36 @@ if test x"$enable_pthread" = xyes; then
       ac_cv_func_pthread_attr_init=no
     else
       AC_CHECK_FUNCS(pthread_attr_init)
+    fi
+    if test "$ac_cv_func_pthread_setname_np" = yes; then
+	AC_CACHE_CHECK([arguments of pthread_setname_np], [rb_cv_func_pthread_setname_np_arguments],
+	    [rb_cv_func_pthread_setname_np_arguments=
+	    # Linux,AIX,  (pthread_self(), name)
+	    # NetBSD (pthread_self(), name, \"%s\")
+	    # Darwin (name)
+	    for mac in \
+		"(pthread_self(), name)" \
+		"(pthread_self(), name, \"%s\")" \
+		"(name)" \
+		; do
+		AC_TRY_COMPILE([
+		    @%:@include <pthread.h>
+		    @%:@ifdef HAVE_PTHREAD_NP_H
+		    @%:@include <pthread_np.h>
+		    @%:@endif
+		    @%:@define SET_THREAD_NAME(name) pthread_setname_np${mac}
+		    ],
+		    [if (SET_THREAD_NAME("conftest")) return 1;],
+		    [rb_cv_func_pthread_setname_np_arguments="${mac}"
+		    break])
+	    done
+	    ]
+	)
+	if test -n "${rb_cv_func_pthread_setname_np_arguments}"; then
+	    AC_DEFINE_UNQUOTED(SET_THREAD_NAME(name), pthread_setname_np${rb_cv_func_pthread_setname_np_arguments})
+	else
+	    AC_DEFINE_UNQUOTED(SET_THREAD_NAME(name), (void)0)
+	fi
     fi
 fi
 if test x"$ac_cv_header_ucontext_h" = xyes; then
