@@ -4064,11 +4064,16 @@ rb_io_close_read(VALUE io)
     write_io = GetWriteIO(io);
     if (io != write_io) {
 	rb_io_t *wfptr;
-        rb_io_fptr_cleanup(fptr, FALSE);
 	GetOpenFile(write_io, wfptr);
+	wfptr->pid = fptr->pid;
+	fptr->pid = 0;
         RFILE(io)->fptr = wfptr;
-        RFILE(write_io)->fptr = NULL;
-        rb_io_fptr_finalize(fptr);
+	/* bind to write_io temporarily to get rid of memory/fd leak */
+	fptr->tied_io_for_writing = 0;
+	fptr->mode &= ~FMODE_DUPLEX;
+	RFILE(write_io)->fptr = fptr;
+	rb_io_fptr_cleanup(fptr, FALSE);
+	/* should not finalize fptr because another thread may be reading it */
         return Qnil;
     }
 
@@ -4124,12 +4129,12 @@ rb_io_close_write(VALUE io)
 	rb_raise(rb_eIOError, "closing non-duplex IO for writing");
     }
 
-    rb_io_close(write_io);
     if (io != write_io) {
 	GetOpenFile(io, fptr);
 	fptr->tied_io_for_writing = 0;
 	fptr->mode &= ~FMODE_DUPLEX;
     }
+    rb_io_close(write_io);
     return Qnil;
 }
 
@@ -4208,6 +4213,7 @@ rb_io_syswrite(VALUE io, VALUE str)
     }
 
     n = rb_write_internal(fptr->fd, RSTRING_PTR(str), RSTRING_LEN(str));
+    RB_GC_GUARD(str);
 
     if (n == -1) rb_sys_fail_path(fptr->pathv);
 
