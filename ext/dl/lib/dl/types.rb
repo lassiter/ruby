@@ -7,8 +7,6 @@ module DL
   # * BOOL
   # * BYTE
   # * DWORD
-  # * DWORD32
-  # * DWORD64
   # * HANDLE
   # * HDC
   # * HINSTANCE
@@ -29,8 +27,6 @@ module DL
       m.module_eval{
         typealias "DWORD", "unsigned long"
         typealias "PDWORD", "unsigned long *"
-        typealias "DWORD32", "unsigned long"
-        typealias "DWORD64", "unsigned long long"
         typealias "WORD", "unsigned short"
         typealias "PWORD", "unsigned short *"
         typealias "BOOL", "int"

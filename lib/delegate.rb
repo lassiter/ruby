@@ -415,3 +415,5 @@ def DelegateClass(superclass)
   end
   return klass
 end
+
+require 'native_delegate.jar'
