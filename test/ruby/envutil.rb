@@ -1,6 +1,7 @@
 # -*- coding: us-ascii -*-
 require "open3"
 require "timeout"
+require "test/unit"
 
 module EnvUtil
   def rubybin
@@ -149,6 +150,22 @@ module EnvUtil
     $VERBOSE = verbose
   end
   module_function :with_default_internal
+
+  def labeled_module(name, &block)
+    Module.new do
+      singleton_class.class_eval {define_method(:to_s) {name}; alias inspect to_s}
+      class_eval(&block) if block
+    end
+  end
+  module_function :labeled_module
+
+  def labeled_class(name, superclass = Object, &block)
+    Class.new(superclass) do
+      singleton_class.class_eval {define_method(:to_s) {name}; alias inspect to_s}
+      class_eval(&block) if block
+    end
+  end
+  module_function :labeled_class
 end
 
 module Test
@@ -160,7 +177,7 @@ module Test
         code.sub!(/\A(?:\xef\xbb\xbf)?(\s*\#.*$)*(\n)?/n) {
           "#$&#{"\n" if $1 && !$2}BEGIN{throw tag, :ok}\n"
         }
-        code.force_encoding("us-ascii")
+        code.force_encoding(Encoding::UTF_8)
         verbose, $VERBOSE = $VERBOSE, nil
         yield if defined?(yield)
         case
@@ -278,8 +295,11 @@ module Test
           file ||= loc.path
           line ||= loc.lineno
         end
+        line -= 2
         src = <<eom
-  require 'test/unit';include Test::Unit::Assertions;begin;#{src}
+# -*- coding: #{src.encoding}; -*-
+  require #{__dir__.dump}'/envutil';include Test::Unit::Assertions;begin
+#{src}
   ensure
     puts [Marshal.dump($!)].pack('m'), "assertions=\#{self._assertions}"
   end
@@ -320,7 +340,8 @@ eom
         assert_warning(*args) {$VERBOSE = false; yield}
       end
 
-      def assert_no_memory_leak(args, prepare, code, message=nil, limit: 1.5)
+      def assert_no_memory_leak(args, prepare, code, message=nil, limit: 1.52, rss: false, timeout: 10)
+        require_relative 'memory_status'
         token = "\e[7;1m#{$$.to_s}:#{Time.now.strftime('%s.%L')}:#{rand(0x10000).to_s(16)}:\e[m"
         token_dump = token.dump
         token_re = Regexp.quote(token)
@@ -331,20 +352,50 @@ eom
           "-v", "-",
         ]
         cmd = [
-          'END {STDERR.puts '"#{token_dump}"'"FINAL=#{Memory::Status.new.size}"}',
+          'END {STDERR.puts '"#{token_dump}"'"FINAL=#{Memory::Status.new}"}',
           prepare,
-          'STDERR.puts('"#{token_dump}"'"START=#{$initial_size = Memory::Status.new.size}")',
+          'STDERR.puts('"#{token_dump}"'"START=#{$initial_status = Memory::Status.new}")',
+          '$initial_size = $initial_status.size',
           code,
+          'GC.start',
         ].join("\n")
-        _, err, status = EnvUtil.invoke_ruby(args, cmd, true, true)
-        before = err.sub!(/^#{token_re}START=(\d+)\n/, '') && $1.to_i
-        after = err.sub!(/^#{token_re}FINAL=(\d+)\n/, '') && $1.to_i
+        _, err, status = EnvUtil.invoke_ruby(args, cmd, true, true, timeout: timeout)
+        before = err.sub!(/^#{token_re}START=(\{.*\})\n/, '') && Memory::Status.parse($1)
+        after = err.sub!(/^#{token_re}FINAL=(\{.*\})\n/, '') && Memory::Status.parse($1)
         assert_equal([true, ""], [status.success?, err], message)
-        assert_operator(after.fdiv(before), :<, limit, message)
+        ([:size, (rss && :rss)] & after.members).each do |n|
+          b = before[n]
+          a = after[n]
+          next unless a > 0 and b > 0
+          assert_operator(a.fdiv(b), :<, limit, message(message) {"#{n}: #{b} => #{a}"})
+        end
       end
 
       def assert_is_minus_zero(f)
         assert(1.0/f == -Float::INFINITY, "#{f} is not -0.0")
+      end
+
+      def assert_raise_with_message(exception, expected, msg = nil, &block)
+        case expected
+        when String
+          assert = :assert_equal
+        when Regexp
+          assert = :assert_match
+        else
+          raise TypeError, "Expected #{expected.inspect} to be a kind of String or Regexp, not #{expected.class}"
+        end
+
+        ex = assert_raise(exception, *msg) {yield}
+        msg = message(msg, "") {"Expected Exception(#{exception}) was raised, but the message doesn't match"}
+
+        if assert == :assert_equal
+          assert_equal(expected, ex.message, msg)
+        else
+          msg = message(msg) { "Expected #{mu_pp expected} to match #{mu_pp ex.message}" }
+          assert expected =~ ex.message, msg
+          block.binding.eval("proc{|_|$~=_}").call($~)
+        end
+        ex
       end
 
       def assert_file

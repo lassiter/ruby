@@ -164,6 +164,8 @@ class TestObject < Test::Unit::TestCase
     o.instance_eval { @foo = :foo }
     assert_equal(:foo, o.instance_variable_get(:@foo))
     assert_equal(nil, o.instance_variable_get(:@bar))
+    assert_raise(NameError) { o.instance_variable_get('@') }
+    assert_raise(NameError) { o.instance_variable_get(:'@') }
     assert_raise(NameError) { o.instance_variable_get(:foo) }
   end
 
@@ -171,6 +173,8 @@ class TestObject < Test::Unit::TestCase
     o = Object.new
     o.instance_variable_set(:@foo, :foo)
     assert_equal(:foo, o.instance_eval { @foo })
+    assert_raise(NameError) { o.instance_variable_set(:'@', 1) }
+    assert_raise(NameError) { o.instance_variable_set('@', 1) }
     assert_raise(NameError) { o.instance_variable_set(:foo, 1) }
   end
 
@@ -179,6 +183,8 @@ class TestObject < Test::Unit::TestCase
     o.instance_eval { @foo = :foo }
     assert_equal(true, o.instance_variable_defined?(:@foo))
     assert_equal(false, o.instance_variable_defined?(:@bar))
+    assert_raise(NameError) { o.instance_variable_defined?(:'@') }
+    assert_raise(NameError) { o.instance_variable_defined?('@') }
     assert_raise(NameError) { o.instance_variable_defined?(:foo) }
   end
 
@@ -278,6 +284,15 @@ class TestObject < Test::Unit::TestCase
     assert_in_out_err([], <<-INPUT, [], /warning: redefining `__send__' may cause serious problems$/)
       $VERBOSE = false
       def (Object.new).__send__; end
+    INPUT
+
+    bug10421 = '[ruby-dev:48691] [Bug #10421]'
+    assert_in_out_err([], <<-INPUT, ["1"], [], bug10421)
+      $VERBOSE = false
+      class C < BasicObject
+        def object_id; 1; end
+      end
+      puts C.new.object_id
     INPUT
   end
 
@@ -891,5 +906,15 @@ class TestObject < Test::Unit::TestCase
     assert_equal "can't convert Array into Integer", err.message, issue
     err = assert_raise(TypeError){ [].first([42]) }
     assert_equal 'no implicit conversion of Array into Integer', err.message, issue
+  end
+
+  def test_copied_ivar_memory_leak
+    bug10191 = '[ruby-core:64700] [Bug #10191]'
+    assert_no_memory_leak([], <<-"end;", <<-"end;", bug10191, rss: true, timeout: 60)
+      def (a = Object.new).set; @v = nil; end
+      num = 500_000
+    end;
+      num.times {a.clone.set}
+    end;
   end
 end

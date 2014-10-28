@@ -582,6 +582,7 @@ load_encoding(const char *name)
     VALUE enclib = rb_sprintf("enc/%s.so", name);
     VALUE verbose = ruby_verbose;
     VALUE debug = ruby_debug;
+    VALUE errinfo;
     VALUE loaded;
     char *s = RSTRING_PTR(enclib) + 4, *e = RSTRING_END(enclib) - 3;
     int idx;
@@ -595,10 +596,11 @@ load_encoding(const char *name)
     OBJ_FREEZE(enclib);
     ruby_verbose = Qfalse;
     ruby_debug = Qfalse;
+    errinfo = rb_errinfo();
     loaded = rb_protect(require_enc, enclib, 0);
     ruby_verbose = verbose;
     ruby_debug = debug;
-    rb_set_errinfo(Qnil);
+    rb_set_errinfo(errinfo);
     if (NIL_P(loaded)) return -1;
     if ((idx = rb_enc_registered(name)) < 0) return -1;
     if (enc_autoload_p(enc_table.list[idx].enc)) return -1;
@@ -1064,13 +1066,11 @@ enc_list(VALUE klass)
 /*
  * call-seq:
  *   Encoding.find(string) -> enc
- *   Encoding.find(symbol) -> enc
  *
  * Search the encoding with specified <i>name</i>.
- * <i>name</i> should be a string or symbol.
+ * <i>name</i> should be a string.
  *
  *   Encoding.find("US-ASCII")  #=> #<Encoding:US-ASCII>
- *   Encoding.find(:Shift_JIS)  #=> #<Encoding:Shift_JIS>
  *
  * Names which this method accept are encoding names and aliases
  * including following special aliases

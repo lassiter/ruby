@@ -361,7 +361,7 @@ static VALUE typelib_file_from_typelib(VALUE ole);
 static VALUE typelib_file(VALUE ole);
 static void ole_const_load(ITypeLib *pTypeLib, VALUE klass, VALUE self);
 static HRESULT clsid_from_remote(VALUE host, VALUE com, CLSID *pclsid);
-static VALUE ole_create_dcom(int argc, VALUE *argv, VALUE self);
+static VALUE ole_create_dcom(VALUE self, VALUE ole, VALUE host, VALUE others);
 static VALUE ole_bind_obj(VALUE moniker, int argc, VALUE *argv, VALUE self);
 static VALUE fole_s_connect(int argc, VALUE *argv, VALUE self);
 static VALUE fole_s_const_load(int argc, VALUE *argv, VALUE self);
@@ -1193,19 +1193,18 @@ static void
 ole_raise(HRESULT hr, VALUE ecs, const char *fmt, ...)
 {
     va_list args;
-    char buf[BUFSIZ];
+    VALUE msg;
     VALUE err_msg;
     va_init_list(args, fmt);
-    vsnprintf(buf, BUFSIZ, fmt, args);
+    msg = rb_vsprintf(fmt, args);
     va_end(args);
 
     err_msg = ole_hresult2msg(hr);
     if(err_msg != Qnil) {
-        rb_raise(ecs, "%s\n%s", buf, StringValuePtr(err_msg));
+	rb_str_cat2(msg, "\n");
+	rb_str_append(msg, err_msg);
     }
-    else {
-        rb_raise(ecs, "%s", buf);
-    }
+    rb_exc_raise(rb_exc_new3(ecs, msg));
 }
 
 void
@@ -2613,9 +2612,8 @@ clsid_from_remote(VALUE host, VALUE com, CLSID *pclsid)
 }
 
 static VALUE
-ole_create_dcom(int argc, VALUE *argv, VALUE self)
+ole_create_dcom(VALUE self, VALUE ole, VALUE host, VALUE others)
 {
-    VALUE ole, host, others;
     HRESULT hr;
     CLSID   clsid;
     OLECHAR *pbuf;
@@ -2633,7 +2631,6 @@ ole_create_dcom(int argc, VALUE *argv, VALUE self)
             GetProcAddress(gole32, "CoCreateInstanceEx");
     if (!gCoCreateInstanceEx)
         rb_raise(rb_eRuntimeError, "CoCreateInstanceEx is not supported in this environment");
-    rb_scan_args(argc, argv, "2*", &ole, &host, &others);
 
     pbuf  = ole_vstr2wc(ole);
     hr = CLSIDFromProgID(pbuf, &clsid);
@@ -3251,7 +3248,7 @@ fole_initialize(int argc, VALUE *argv, VALUE self)
             rb_raise(rb_eSecurityError, "Insecure Object Creation - %s",
                      StringValuePtr(svr_name));
         }
-        return ole_create_dcom(argc, argv, self);
+        return ole_create_dcom(self, svr_name, host, others);
     }
 
     /* get CLSID from OLE server name */

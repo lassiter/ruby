@@ -377,8 +377,8 @@ rb_mod_s_constants(int argc, VALUE *argv, VALUE mod)
     VALUE cbase = 0;
     void *data = 0;
 
-    if (argc > 0) {
-	return rb_mod_constants(argc, argv, rb_cModule);
+    if (argc > 0 || mod != rb_cModule) {
+	return rb_mod_constants(argc, argv, mod);
     }
 
     while (cref) {
@@ -467,23 +467,23 @@ setup_exception(rb_thread_t *th, int tag, volatile VALUE mesg)
 	!rb_obj_is_kind_of(e, rb_eSystemExit)) {
 	int status;
 
+	mesg = e;
 	PUSH_TAG();
 	if ((status = EXEC_TAG()) == 0) {
-	    RB_GC_GUARD(e) = rb_obj_as_string(e);
+	    th->errinfo = Qnil;
+	    e = rb_obj_as_string(mesg);
+	    th->errinfo = mesg;
 	    if (file && line) {
-		warn_printf("Exception `%s' at %s:%d - %s\n",
-			    rb_obj_classname(th->errinfo),
-			    file, line, RSTRING_PTR(e));
+		warn_printf("Exception `%"PRIsVALUE"' at %s:%d - %"PRIsVALUE"\n",
+			    rb_obj_class(mesg), file, line, e);
 	    }
 	    else if (file) {
-		warn_printf("Exception `%s' at %s - %s\n",
-			    rb_obj_classname(th->errinfo),
-			    file, RSTRING_PTR(e));
+		warn_printf("Exception `%"PRIsVALUE"' at %s - %"PRIsVALUE"\n",
+			    rb_obj_class(mesg), file, e);
 	    }
 	    else {
-		warn_printf("Exception `%s' - %s\n",
-			    rb_obj_classname(th->errinfo),
-			    RSTRING_PTR(e));
+		warn_printf("Exception `%"PRIsVALUE"' - %"PRIsVALUE"\n",
+			    rb_obj_class(mesg), e);
 	    }
 	}
 	POP_TAG();
@@ -714,7 +714,7 @@ rb_rescue2(VALUE (* b_proc) (ANYARGS), VALUE data1,
 	result = (*b_proc) (data1);
     }
     else {
-	th->cfp = cfp; /* restore */
+	rb_vm_rewind_cfp(th, cfp);
 
 	if (state == TAG_RAISE) {
 	    int handle = FALSE;
@@ -793,7 +793,7 @@ rb_protect(VALUE (* proc) (VALUE), VALUE data, int * state)
 	*state = status;
     }
     if (status != 0) {
-	th->cfp = cfp;
+	rb_vm_rewind_cfp(th, cfp);
 	return Qnil;
     }
 
@@ -929,13 +929,6 @@ rb_frame_caller(void)
     rb_control_frame_t *prev_cfp = previous_frame(GET_THREAD());
     if (!prev_cfp) return 0;
     return frame_func_id(prev_cfp);
-}
-
-void
-rb_frame_pop(void)
-{
-    rb_thread_t *th = GET_THREAD();
-    th->cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(th->cfp);
 }
 
 /*

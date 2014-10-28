@@ -1910,7 +1910,7 @@ get_timeval(VALUE obj)
     struct time_object *tobj;
     TypedData_Get_Struct(obj, struct time_object, &time_data_type, tobj);
     if (!TIME_INIT_P(tobj)) {
-	rb_raise(rb_eTypeError, "uninitialized %"PRIsVALUE, CLASS_OF(obj));
+	rb_raise(rb_eTypeError, "uninitialized %"PRIsVALUE, rb_obj_class(obj));
     }
     return tobj;
 }
@@ -1921,7 +1921,7 @@ get_new_timeval(VALUE obj)
     struct time_object *tobj;
     TypedData_Get_Struct(obj, struct time_object, &time_data_type, tobj);
     if (TIME_INIT_P(tobj)) {
-	rb_raise(rb_eTypeError, "already initialized %"PRIsVALUE, CLASS_OF(obj));
+	rb_raise(rb_eTypeError, "already initialized %"PRIsVALUE, rb_obj_class(obj));
     }
     return tobj;
 }
@@ -2435,6 +2435,10 @@ time_timespec(VALUE num, int interval)
 	    d = modf(RFLOAT_VALUE(num), &f);
 	    if (d >= 0) {
 		t.tv_nsec = (int)(d*1e9+0.5);
+		if (t.tv_nsec >= 1000000000) {
+		    t.tv_nsec -= 1000000000;
+		    f += 1;
+		}
 	    }
 	    else if ((t.tv_nsec = (int)(-d*1e9+0.5)) > 0) {
 		t.tv_nsec = 1000000000 - t.tv_nsec;
@@ -4887,7 +4891,9 @@ end_submicro: ;
 	time_fixoff(time);
     }
     if (!NIL_P(zone)) {
+	zone = rb_str_new_frozen(zone);
 	tobj->vtm.zone = RSTRING_PTR(zone);
+	rb_ivar_set(time, id_zone, zone);
     }
 
     return time;

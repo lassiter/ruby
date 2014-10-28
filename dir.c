@@ -1388,11 +1388,19 @@ glob_helper(
 	while (READDIR(dirp, enc, &STRUCT_DIRENT(entry), dp)) {
 	    char *buf;
 	    enum answer new_isdir = UNKNOWN;
+	    int dotfile = 0;
 
 	    if (recursive && dp->d_name[0] == '.') {
-		/* always skip current and parent directories not to recurse infinitely */
-		if (!dp->d_name[1]) continue;
-		if (dp->d_name[1] == '.' && !dp->d_name[2]) continue;
+		++dotfile;
+		if (!dp->d_name[1]) {
+		    /* unless DOTMATCH, skip current directories not to recurse infinitely */
+		    if (!(flags & FNM_DOTMATCH)) continue;
+		    ++dotfile;
+		}
+		else if (dp->d_name[1] == '.' && !dp->d_name[2]) {
+		    /* always skip parent directories not to recurse infinitely */
+		    continue;
+		}
 	    }
 
 	    buf = join_path(path, dirsep, dp->d_name, NAMLEN(dp));
@@ -1400,7 +1408,7 @@ glob_helper(
 		status = -1;
 		break;
 	    }
-	    if (recursive && ((flags & FNM_DOTMATCH) || dp->d_name[0] != '.')) {
+	    if (recursive && dotfile < ((flags & FNM_DOTMATCH) ? 2 : 1)) {
 		/* RECURSIVE never match dot files unless FNM_DOTMATCH is set */
 #ifndef _WIN32
 		if (do_lstat(buf, &st, flags) == 0)
@@ -1743,11 +1751,9 @@ dir_globs(long argc, VALUE *argv, int flags)
 
 /*
  *  call-seq:
- *     Dir[ array ]                 -> array
  *     Dir[ string [, string ...] ] -> array
  *
  *  Equivalent to calling
- *  <code>Dir.glob(</code><i>array,</i><code>0)</code> and
  *  <code>Dir.glob([</code><i>string,...</i><code>],0)</code>.
  *
  */

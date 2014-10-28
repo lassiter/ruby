@@ -480,6 +480,7 @@ iseq_load(VALUE self, VALUE data, VALUE parent, VALUE opt)
     VALUE type, body, locals, args, exception;
 
     st_data_t iseq_type;
+    static struct st_table *type_map_cache = 0;
     struct st_table *type_map = 0;
     rb_iseq_t *iseq;
     rb_compile_option_t option;
@@ -519,7 +520,9 @@ iseq_load(VALUE self, VALUE data, VALUE parent, VALUE opt)
     GetISeqPtr(iseqval, iseq);
     iseq->self = iseqval;
 
+    type_map = type_map_cache;
     if (type_map == 0) {
+	struct st_table *cached_map;
 	type_map = st_init_numtable();
 	st_insert(type_map, ID2SYM(rb_intern("top")), ISEQ_TYPE_TOP);
 	st_insert(type_map, ID2SYM(rb_intern("method")), ISEQ_TYPE_METHOD);
@@ -530,6 +533,11 @@ iseq_load(VALUE self, VALUE data, VALUE parent, VALUE opt)
 	st_insert(type_map, ID2SYM(rb_intern("eval")), ISEQ_TYPE_EVAL);
 	st_insert(type_map, ID2SYM(rb_intern("main")), ISEQ_TYPE_MAIN);
 	st_insert(type_map, ID2SYM(rb_intern("defined_guard")), ISEQ_TYPE_DEFINED_GUARD);
+	cached_map = ATOMIC_PTR_CAS(type_map_cache, (struct st_table *)0, type_map);
+	if (cached_map) {
+	    st_free_table(type_map);
+	    type_map = cached_map;
+	}
     }
 
     if (st_lookup(type_map, type, &iseq_type) == 0) {
@@ -573,18 +581,6 @@ rb_iseq_load(VALUE data, VALUE parent, VALUE opt)
     return iseq_load(rb_cISeq, data, parent, opt);
 }
 
-static NODE *
-parse_string(VALUE str, const char *file, int line)
-{
-    VALUE parser = rb_parser_new();
-    NODE *node = rb_parser_compile_string(parser, file, str, line);
-
-    if (!node) {
-	rb_exc_raise(GET_THREAD()->errinfo);	/* TODO: check err */
-    }
-    return node;
-}
-
 VALUE
 rb_iseq_compile_with_option(VALUE src, VALUE file, VALUE absolute_path, VALUE line, rb_block_t *base_block, VALUE opt)
 {
@@ -597,17 +593,25 @@ rb_iseq_compile_with_option(VALUE src, VALUE file, VALUE absolute_path, VALUE li
 
     TH_PUSH_TAG(th);
     if ((state = EXEC_TAG()) == 0) {
+	VALUE parser;
 	int ln = NUM2INT(line);
-	const char *fn = StringValueCStr(file);
 	NODE *node;
 	rb_compile_option_t option;
 
+	StringValueCStr(file);
 	make_compile_option(&option, opt);
 
+	parser = rb_parser_new();
+
 	if (RB_TYPE_P((src), T_FILE))
-	    node = rb_compile_file(fn, src, ln);
-	else
-	    node = parse_string(StringValue(src), fn, ln);
+	    node = rb_parser_compile_file_path(parser, file, src, ln);
+	else {
+	    node = rb_parser_compile_string_path(parser, file, src, ln);
+
+	    if (!node) {
+		rb_exc_raise(GET_THREAD()->errinfo);	/* TODO: check err */
+	    }
+	}
 
 	if (base_block && base_block->iseq) {
 	    iseqval = rb_iseq_new_with_opt(node, base_block->iseq->location.label,

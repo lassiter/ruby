@@ -178,9 +178,13 @@ VALUE num_interval_step_size(VALUE from, VALUE to, VALUE step, int excl);
 int ruby_float_step(VALUE from, VALUE to, VALUE step, int excl);
 double ruby_float_mod(double x, double y);
 int rb_num_negative_p(VALUE);
+VALUE rb_int_succ(VALUE num);
+VALUE rb_int_pred(VALUE num);
 
 /* object.c */
+void rb_obj_copy_ivar(VALUE dest, VALUE obj);
 VALUE rb_obj_equal(VALUE obj1, VALUE obj2);
+VALUE rb_class_search_ancestor(VALUE klass, VALUE super);
 
 /* parse.y */
 VALUE rb_parser_get_yydebug(VALUE);
@@ -318,6 +322,7 @@ void rb_vm_inc_const_missing_count(void);
 void rb_thread_mark(void *th);
 const void **rb_vm_get_insns_address_table(void);
 VALUE rb_sourcefilename(void);
+void rb_vm_pop_cfunc_frame(void);
 
 /* vm_dump.c */
 void rb_vm_bugreport(void);

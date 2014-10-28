@@ -478,4 +478,24 @@ class TestEval < Test::Unit::TestCase
     result = foo.instance_eval(&foo_pr)
     assert_equal(1, result, 'Bug #3786, Bug #3860, [ruby-core:32501]')
   end
+
+  def test_file_encoding
+    fname = "\u{3042}".encode("euc-jp")
+    assert_equal(fname, eval("__FILE__", nil, fname, 1))
+  end
+
+  def test_gced_binding_block
+    assert_normal_exit %q{
+      def m
+        binding
+      end
+      GC.stress = true
+      b = nil
+      tap do
+        b = m {}
+      end
+      0.times.to_a
+      b.eval('yield')
+    }, '[Bug #10368]'
+  end
 end

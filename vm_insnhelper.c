@@ -935,7 +935,13 @@ check_match(VALUE pattern, VALUE target, enum vm_check_match_type type)
       case VM_CHECKMATCH_TYPE_CASE: {
 	VALUE defined_class;
 	rb_method_entry_t *me = rb_method_entry_with_refinements(CLASS_OF(pattern), idEqq, &defined_class);
-	return vm_call0(GET_THREAD(), pattern, idEqq, 1, &target, me, defined_class);
+	if (me) {
+	  return vm_call0(GET_THREAD(), pattern, idEqq, 1, &target, me, defined_class);
+	}
+	else {
+	  /* fallback to funcall (e.g. method_missing) */
+	  return rb_funcall2(pattern, idEqq, 1, &target);
+	}
       }
       default:
 	rb_bug("check_match: unreachable");
@@ -1225,23 +1231,33 @@ static VALUE vm_call_iseq_setup_2(rb_thread_t *th, rb_control_frame_t *cfp, rb_c
 static inline VALUE vm_call_iseq_setup_normal(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci);
 static inline VALUE vm_call_iseq_setup_tailcall(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci);
 
-#define VM_CALLEE_SETUP_ARG(th, ci, iseq, argv, is_lambda) \
-    if (LIKELY((iseq)->arg_simple & 0x01)) { \
-	/* simple check */ \
-	if ((ci)->argc != (iseq)->argc) { \
-	    argument_error((iseq), ((ci)->argc), (iseq)->argc, (iseq)->argc); \
-	} \
-	(ci)->aux.opt_pc = 0; \
-	CI_SET_FASTPATH((ci), UNLIKELY((ci)->flag & VM_CALL_TAILCALL) ? vm_call_iseq_setup_tailcall : vm_call_iseq_setup_normal, !(is_lambda) && !((ci)->me->flag & NOEX_PROTECTED)); \
-    } \
-    else { \
-	(ci)->aux.opt_pc = vm_callee_setup_arg_complex((th), (ci), (iseq), (argv)); \
+static inline void
+vm_callee_setup_arg(rb_thread_t *th, rb_call_info_t *ci, const rb_iseq_t *iseq,
+		    VALUE *argv, int is_lambda)
+{
+    if (LIKELY(iseq->arg_simple & 0x01)) {
+	/* simple check */
+	if (ci->argc != iseq->argc) {
+	    argument_error(iseq, ci->argc, iseq->argc, iseq->argc);
+	}
+	ci->aux.opt_pc = 0;
+	CI_SET_FASTPATH(ci,
+			(UNLIKELY(ci->flag & VM_CALL_TAILCALL) ?
+			 vm_call_iseq_setup_tailcall :
+			 vm_call_iseq_setup_normal),
+			(!is_lambda &&
+			 !(ci->flag & VM_CALL_ARGS_SPLAT) && /* argc may differ for each calls */
+			 !(ci->me->flag & NOEX_PROTECTED)));
     }
+    else {
+	ci->aux.opt_pc = vm_callee_setup_arg_complex(th, ci, iseq, argv);
+    }
+}
 
 static VALUE
 vm_call_iseq_setup(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 {
-    VM_CALLEE_SETUP_ARG(th, ci, ci->me->def->body.iseq, cfp->sp - ci->argc, 0);
+    vm_callee_setup_arg(th, ci, ci->me->def->body.iseq, cfp->sp - ci->argc, 0);
     return vm_call_iseq_setup_2(th, cfp, ci);
 }
 
@@ -1833,14 +1849,17 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 		    ci->me = me;
 		    ci->defined_class = defined_class;
 		    if (me->def->type != VM_METHOD_TYPE_REFINED) {
-			goto normal_method_dispatch;
+			goto start_method_dispatch;
 		    }
 		}
 
 	      no_refinement_dispatch:
 		if (ci->me->def->body.orig_me) {
 		    ci->me = ci->me->def->body.orig_me;
-		    goto normal_method_dispatch;
+		    if (UNDEFINED_METHOD_ENTRY_P(ci->me)) {
+			ci->me = 0;
+		    }
+		    goto start_method_dispatch;
 		}
 		else {
 		    klass = ci->me->klass;
@@ -2002,15 +2021,17 @@ vm_search_super_method(rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_call_inf
 	current_defined_class = RCLASS_REFINED_CLASS(current_defined_class);
     }
 
-    if (!FL_TEST(current_defined_class, RMODULE_INCLUDED_INTO_REFINEMENT) &&
+    if (BUILTIN_TYPE(current_defined_class) != T_MODULE &&
+	BUILTIN_TYPE(current_defined_class) != T_ICLASS && /* bound UnboundMethod */
+	!FL_TEST(current_defined_class, RMODULE_INCLUDED_INTO_REFINEMENT) &&
 	!rb_obj_is_kind_of(ci->recv, current_defined_class)) {
 	VALUE m = RB_TYPE_P(current_defined_class, T_ICLASS) ?
 	    RBASIC(current_defined_class)->klass : current_defined_class;
 
 	rb_raise(rb_eTypeError,
 		 "self has wrong type to call super in this context: "
-		 "%s (expected %s)",
-		 rb_obj_classname(ci->recv), rb_class2name(m));
+		 "%"PRIsVALUE" (expected %"PRIsVALUE")",
+		 rb_obj_class(ci->recv), m);
     }
 
     switch (vm_search_superclass(GET_CFP(), iseq, sigval, ci)) {
@@ -2021,6 +2042,12 @@ vm_search_super_method(rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_call_inf
 		 "implicit argument passing of super from method defined"
 		 " by define_method() is not supported."
 		 " Specify all arguments explicitly.");
+    }
+    if (!ci->klass) {
+	/* bound instance method of module */
+	ci->aux.missing_reason = NOEX_SUPER;
+	CI_SET_FASTPATH(ci, vm_call_method_missing, 1);
+	return;
     }
 
     /* TODO: use inline cache */
@@ -2288,7 +2315,7 @@ vm_yield_setup_args(rb_thread_t * const th, const rb_iseq_t *iseq,
 	ci_entry.flag = 0;
 	ci_entry.argc = argc;
 	ci_entry.blockptr = (rb_block_t *)blockptr;
-	VM_CALLEE_SETUP_ARG(th, &ci_entry, iseq, argv, 1);
+	vm_callee_setup_arg(th, &ci_entry, iseq, argv, 1);
 	return ci_entry.aux.opt_pc;
     }
     else {

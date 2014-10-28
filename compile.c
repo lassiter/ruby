@@ -480,8 +480,8 @@ rb_iseq_compile_node(VALUE self, NODE *node)
 		LABEL *start = iseq->compile_data->start_label = NEW_LABEL(0);
 		LABEL *end = iseq->compile_data->end_label = NEW_LABEL(0);
 
-		ADD_LABEL(ret, start);
 		ADD_TRACE(ret, FIX2INT(iseq->location.first_lineno), RUBY_EVENT_B_CALL);
+		ADD_LABEL(ret, start);
 		COMPILE(ret, "block body", node->nd_body);
 		ADD_LABEL(ret, end);
 		ADD_TRACE(ret, nd_line(node), RUBY_EVENT_B_RETURN);
@@ -5701,7 +5701,7 @@ iseq_build_from_ary_body(rb_iseq_t *iseq, LINK_ANCHOR *anchor,
 				VALUE vmid = rb_hash_aref(op, ID2SYM(rb_intern("mid")));
 				VALUE vflag = rb_hash_aref(op, ID2SYM(rb_intern("flag")));
 				VALUE vorig_argc = rb_hash_aref(op, ID2SYM(rb_intern("orig_argc")));
-				VALUE vblock = rb_hash_aref(op, ID2SYM(rb_intern("block")));
+				VALUE vblock = rb_hash_aref(op, ID2SYM(rb_intern("blockptr")));
 
 				if (!NIL_P(vmid)) mid = SYM2ID(vmid);
 				if (!NIL_P(vflag)) flag = NUM2ULONG(vflag);

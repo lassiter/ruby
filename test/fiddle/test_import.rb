@@ -1,6 +1,9 @@
 # coding: US-ASCII
-require_relative 'helper'
-require 'fiddle/import'
+begin
+  require_relative 'helper'
+  require 'fiddle/import'
+rescue LoadError
+end
 
 module Fiddle
   module LIBC
@@ -60,6 +63,15 @@ module Fiddle
       assert_equal(SIZEOF_VOIDP, LIBC.sizeof("FILE*"))
       assert_equal(LIBC::MyStruct.size(), LIBC.sizeof(LIBC::MyStruct))
       assert_equal(LIBC::MyStruct.size(), LIBC.sizeof(LIBC::MyStruct.malloc()))
+    end
+
+    Fiddle.constants.grep(/\ATYPE_(?!VOID\z)(.*)/) do
+      type = $&
+      size = Fiddle.const_get("SIZEOF_#{$1}")
+      name = $1.sub(/P\z/,"*").gsub(/_(?!T\z)/, " ").downcase
+      define_method("test_sizeof_#{name}") do
+        assert_equal(size, Fiddle::Importer.sizeof(name), type)
+      end
     end
 
     def test_unsigned_result()
@@ -134,4 +146,4 @@ module Fiddle
       assert_includes(12.00..13.00, r)
     end
   end
-end
+end if defined?(Fiddle)

@@ -219,6 +219,33 @@ rb_obj_singleton_class(VALUE obj)
     return rb_singleton_class(obj);
 }
 
+void
+rb_obj_copy_ivar(VALUE dest, VALUE obj)
+{
+    if (!(RBASIC(dest)->flags & ROBJECT_EMBED) && ROBJECT_IVPTR(dest)) {
+	xfree(ROBJECT_IVPTR(dest));
+	ROBJECT(dest)->as.heap.ivptr = 0;
+	ROBJECT(dest)->as.heap.numiv = 0;
+	ROBJECT(dest)->as.heap.iv_index_tbl = 0;
+    }
+    if (RBASIC(obj)->flags & ROBJECT_EMBED) {
+	MEMCPY(ROBJECT(dest)->as.ary, ROBJECT(obj)->as.ary, VALUE, ROBJECT_EMBED_LEN_MAX);
+	RBASIC(dest)->flags |= ROBJECT_EMBED;
+    }
+    else {
+	long len = ROBJECT(obj)->as.heap.numiv;
+	VALUE *ptr = 0;
+	if (len > 0) {
+	    ptr = ALLOC_N(VALUE, len);
+	    MEMCPY(ptr, ROBJECT(obj)->as.heap.ivptr, VALUE, len);
+	}
+	ROBJECT(dest)->as.heap.ivptr = ptr;
+	ROBJECT(dest)->as.heap.numiv = len;
+	ROBJECT(dest)->as.heap.iv_index_tbl = ROBJECT(obj)->as.heap.iv_index_tbl;
+	RBASIC(dest)->flags &= ~ROBJECT_EMBED;
+    }
+}
+
 static void
 init_copy(VALUE dest, VALUE obj)
 {
@@ -231,25 +258,7 @@ init_copy(VALUE dest, VALUE obj)
     rb_gc_copy_finalizer(dest, obj);
     switch (TYPE(obj)) {
       case T_OBJECT:
-        if (!(RBASIC(dest)->flags & ROBJECT_EMBED) && ROBJECT_IVPTR(dest)) {
-            xfree(ROBJECT_IVPTR(dest));
-            ROBJECT(dest)->as.heap.ivptr = 0;
-            ROBJECT(dest)->as.heap.numiv = 0;
-            ROBJECT(dest)->as.heap.iv_index_tbl = 0;
-        }
-        if (RBASIC(obj)->flags & ROBJECT_EMBED) {
-            MEMCPY(ROBJECT(dest)->as.ary, ROBJECT(obj)->as.ary, VALUE, ROBJECT_EMBED_LEN_MAX);
-            RBASIC(dest)->flags |= ROBJECT_EMBED;
-        }
-        else {
-            long len = ROBJECT(obj)->as.heap.numiv;
-            VALUE *ptr = ALLOC_N(VALUE, len);
-            MEMCPY(ptr, ROBJECT(obj)->as.heap.ivptr, VALUE, len);
-            ROBJECT(dest)->as.heap.ivptr = ptr;
-            ROBJECT(dest)->as.heap.numiv = len;
-            ROBJECT(dest)->as.heap.iv_index_tbl = ROBJECT(obj)->as.heap.iv_index_tbl;
-            RBASIC(dest)->flags &= ~ROBJECT_EMBED;
-        }
+	rb_obj_copy_ivar(dest, obj);
         break;
       case T_CLASS:
       case T_MODULE:
@@ -524,6 +533,8 @@ class_or_module_required(VALUE c)
     return c;
 }
 
+static VALUE class_search_ancestor(VALUE cl, VALUE c);
+
 /*
  *  call-seq:
  *     obj.instance_of?(class)    -> true or false
@@ -584,15 +595,27 @@ rb_obj_is_kind_of(VALUE obj, VALUE c)
     VALUE cl = CLASS_OF(obj);
 
     c = class_or_module_required(c);
-    c = RCLASS_ORIGIN(c);
-    while (cl) {
-	if (cl == c || RCLASS_M_TBL(cl) == RCLASS_M_TBL(c))
-	    return Qtrue;
-	cl = RCLASS_SUPER(cl);
-    }
-    return Qfalse;
+    return class_search_ancestor(cl, RCLASS_ORIGIN(c)) ? Qtrue : Qfalse;
 }
 
+static VALUE
+class_search_ancestor(VALUE cl, VALUE c)
+{
+    while (cl) {
+	if (cl == c || RCLASS_M_TBL(cl) == RCLASS_M_TBL(c))
+	    return cl;
+	cl = RCLASS_SUPER(cl);
+    }
+    return 0;
+}
+
+VALUE
+rb_class_search_ancestor(VALUE cl, VALUE c)
+{
+    cl = class_or_module_required(cl);
+    c = class_or_module_required(c);
+    return class_search_ancestor(cl, RCLASS_ORIGIN(c));
+}
 
 /*
  *  call-seq:
@@ -1486,16 +1509,12 @@ rb_class_inherited_p(VALUE mod, VALUE arg)
 	rb_raise(rb_eTypeError, "compared with non class/module");
     }
     arg = RCLASS_ORIGIN(arg);
-    while (mod) {
-	if (RCLASS_M_TBL(mod) == RCLASS_M_TBL(arg))
-	    return Qtrue;
-	mod = RCLASS_SUPER(mod);
+    if (class_search_ancestor(mod, arg)) {
+	return Qtrue;
     }
     /* not mod < arg; check if mod > arg */
-    while (arg) {
-	if (RCLASS_M_TBL(arg) == RCLASS_M_TBL(start))
-	    return Qfalse;
-	arg = RCLASS_SUPER(arg);
+    if (class_search_ancestor(arg, start)) {
+	return Qfalse;
     }
     return Qnil;
 }
@@ -2350,18 +2369,31 @@ convert_type(VALUE val, const char *tname, const char *method, int raise)
     r = rb_check_funcall(val, m, 0, 0);
     if (r == Qundef) {
 	if (raise) {
-	    rb_raise(rb_eTypeError, i < IMPLICIT_CONVERSIONS
-                ? "no implicit conversion of %s into %s"
-                : "can't convert %s into %s",
-		     NIL_P(val) ? "nil" :
-		     val == Qtrue ? "true" :
-		     val == Qfalse ? "false" :
-		     rb_obj_classname(val),
+	    const char *msg = i < IMPLICIT_CONVERSIONS ?
+		"no implicit conversion of" : "can't convert";
+	    const char *cname = NIL_P(val) ? "nil" :
+		val == Qtrue ? "true" :
+		val == Qfalse ? "false" :
+		NULL;
+	    if (cname)
+		rb_raise(rb_eTypeError, "%s %s into %s", msg, cname, tname);
+	    rb_raise(rb_eTypeError, "%s %"PRIsVALUE" into %s", msg,
+		     rb_obj_class(val),
 		     tname);
 	}
 	return Qnil;
     }
     return r;
+}
+
+NORETURN(static void conversion_mismatch(VALUE, const char *, const char *, VALUE));
+static void
+conversion_mismatch(VALUE val, const char *tname, const char *method, VALUE result)
+{
+    VALUE cname = rb_obj_class(val);
+    rb_raise(rb_eTypeError,
+	     "can't convert %"PRIsVALUE" to %s (%"PRIsVALUE"#%s gives %"PRIsVALUE")",
+	     cname, tname, cname, method, rb_obj_class(result));
 }
 
 VALUE
@@ -2372,9 +2404,7 @@ rb_convert_type(VALUE val, int type, const char *tname, const char *method)
     if (TYPE(val) == type) return val;
     v = convert_type(val, tname, method, TRUE);
     if (TYPE(v) != type) {
-	const char *cname = rb_obj_classname(val);
-	rb_raise(rb_eTypeError, "can't convert %s to %s (%s#%s gives %s)",
-		 cname, tname, cname, method, rb_obj_classname(v));
+	conversion_mismatch(val, tname, method, v);
     }
     return v;
 }
@@ -2389,9 +2419,7 @@ rb_check_convert_type(VALUE val, int type, const char *tname, const char *method
     v = convert_type(val, tname, method, FALSE);
     if (NIL_P(v)) return Qnil;
     if (TYPE(v) != type) {
-	const char *cname = rb_obj_classname(val);
-	rb_raise(rb_eTypeError, "can't convert %s to %s (%s#%s gives %s)",
-		 cname, tname, cname, method, rb_obj_classname(v));
+	conversion_mismatch(val, tname, method, v);
     }
     return v;
 }
@@ -2406,9 +2434,7 @@ rb_to_integer(VALUE val, const char *method)
     if (RB_TYPE_P(val, T_BIGNUM)) return val;
     v = convert_type(val, "Integer", method, TRUE);
     if (!rb_obj_is_kind_of(v, rb_cInteger)) {
-	const char *cname = rb_obj_classname(val);
-	rb_raise(rb_eTypeError, "can't convert %s to Integer (%s#%s gives %s)",
-		 cname, cname, method, rb_obj_classname(v));
+	conversion_mismatch(val, "Integer", method, v);
     }
     return v;
 }

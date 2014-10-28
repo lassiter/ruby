@@ -155,7 +155,7 @@ rsock_s_recvfrom(VALUE sock, int argc, VALUE *argv, enum sock_recv_type from)
 	}
 #endif
 	if (arg.alen && arg.alen != sizeof(arg.buf)) /* OSX doesn't return a from result for connection-oriented sockets */
-	    return rb_assoc_new(str, rsock_ipaddr((struct sockaddr*)&arg.buf, fptr->mode & FMODE_NOREVLOOKUP));
+	    return rb_assoc_new(str, rsock_ipaddr((struct sockaddr*)&arg.buf, arg.alen, fptr->mode & FMODE_NOREVLOOKUP));
 	else
 	    return rb_assoc_new(str, Qnil);
 
@@ -227,7 +227,7 @@ rsock_s_recvfrom_nonblock(VALUE sock, int argc, VALUE *argv, enum sock_recv_type
 
       case RECV_IP:
         if (alen && alen != sizeof(buf)) /* connection-oriented socket may not return a from result */
-            addr = rsock_ipaddr((struct sockaddr*)&buf, fptr->mode & FMODE_NOREVLOOKUP);
+            addr = rsock_ipaddr((struct sockaddr*)&buf, alen, fptr->mode & FMODE_NOREVLOOKUP);
         break;
 
       case RECV_SOCKET:
@@ -314,8 +314,12 @@ wait_connectable(int fd)
 	     */
 	    if (ret < 0)
 		break;
-	    if (sockerr == 0)
-		continue;	/* workaround for winsock */
+	    if (sockerr == 0) {
+		if (revents & RB_WAITFD_OUT)
+		    break;
+		else
+		    continue;	/* workaround for winsock */
+	    }
 
 	    /* BSD and Linux use sockerr. */
 	    errno = sockerr;
@@ -488,7 +492,11 @@ cloexec_accept(int socket, struct sockaddr *address, socklen_t *address_len)
     if (address_len) len0 = *address_len;
 #ifdef HAVE_ACCEPT4
     if (try_accept4) {
-        ret = accept4(socket, address, address_len, SOCK_CLOEXEC);
+        int flags = 0;
+#ifdef SOCK_CLOEXEC
+        flags |= SOCK_CLOEXEC;
+#endif
+        ret = accept4(socket, address, address_len, flags);
         /* accept4 is available since Linux 2.6.28, glibc 2.10. */
         if (ret != -1) {
             if (ret <= 2)

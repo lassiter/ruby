@@ -10,6 +10,17 @@
 
 #include <assert.h>
 #include <limits.h>
+#include <stddef.h>
+
+#ifndef _MSC_VER
+#include <stdint.h>
+#else
+#ifdef _WIN64
+#define PTRDIFF_MAX _I64_MAX
+#else
+#define PTRDIFF_MAX INT_MAX
+#endif
+#endif
 
 /*
  * Memory management.
@@ -135,9 +146,12 @@ yaml_string_join(
      (string).start = (string).pointer = (string).end = 0)
 
 #define STRING_EXTEND(context,string)                                           \
-    (((string).pointer+5 < (string).end)                                        \
+    ((((string).pointer+5 < (string).end)                                       \
         || yaml_string_extend(&(string).start,                                  \
-            &(string).pointer, &(string).end))
+            &(string).pointer, &(string).end)) ?                                \
+         1 :                                                                    \
+        ((context)->error = YAML_MEMORY_ERROR,                                  \
+         0))
 
 #define CLEAR(context,string)                                                   \
     ((string).pointer = (string).start,                                         \
@@ -422,7 +436,14 @@ yaml_queue_extend(void **start, void **head, void **tail, void **end);
      (stack).start = (stack).top = (stack).end = 0)
 
 #define STACK_EMPTY(context,stack)                                              \
-    ((stack).start == (stack).top)
+    ((void)(context),                                                           \
+     ((stack).start == (stack).top))
+
+#define STACK_LIMIT(context,stack,size)                                         \
+    ((stack).top - (stack).start < (size) ?                                     \
+        1 :                                                                     \
+        ((context)->error = YAML_MEMORY_ERROR,                                  \
+         0))
 
 #define PUSH(context,stack,value)                                               \
     (((stack).top != (stack).end                                                \

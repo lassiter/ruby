@@ -1517,7 +1517,7 @@ const_missing(VALUE klass, ID id)
 VALUE
 rb_mod_const_missing(VALUE klass, VALUE name)
 {
-    rb_frame_pop(); /* pop frame for "const_missing" */
+    rb_vm_pop_cfunc_frame();
     uninitialized_constant(klass, rb_to_id(name));
 
     UNREACHABLE;
@@ -2183,6 +2183,8 @@ rb_const_set(VALUE klass, ID id, VALUE val)
 		    rb_compile_warn(RSTRING_PTR(ce->file), ce->line,
 				    "previous definition of %"PRIsVALUE" was here", name);
 		}
+		st_delete(RCLASS_CONST_TBL(klass), &id, 0);
+		xfree(ce);
 	    }
 	}
     }
@@ -2500,8 +2502,9 @@ cvar_list(void *data)
  *     class Two < One
  *       @@var2 = 2
  *     end
- *     One.class_variables   #=> [:@@var1]
- *     Two.class_variables   #=> [:@@var2, :@@var1]
+ *     One.class_variables          #=> [:@@var1]
+ *     Two.class_variables          #=> [:@@var2, :@@var1]
+ *     Two.class_variables(false)   #=> [:@@var2]
  */
 
 VALUE

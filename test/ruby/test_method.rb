@@ -180,6 +180,26 @@ class TestMethod < Test::Unit::TestCase
     assert_equal(Array.instance_method(:map).hash, Array.instance_method(:collect).hash)
   end
 
+  def test_owner
+    c = Class.new do
+      def foo; end
+    end
+    assert_equal(c, c.instance_method(:foo).owner)
+    c2 = Class.new(c)
+    assert_equal(c, c2.instance_method(:foo).owner)
+  end
+
+  def test_owner_missing
+    c = Class.new do
+      def respond_to_missing?(name, bool)
+        name == :foo
+      end
+    end
+    c2 = Class.new(c)
+    assert_equal(c, c.new.method(:foo).owner)
+    assert_equal(c2, c2.new.method(:foo).owner)
+  end
+
   def test_receiver_name_owner
     o = Object.new
     def o.foo; end
@@ -530,21 +550,28 @@ class TestMethod < Test::Unit::TestCase
     assert_equal(__dir__, eval("__dir__", binding), bug8436)
     bug8662 = '[ruby-core:56099] [Bug #8662]'
     assert_equal("arbitrary", eval("__dir__", binding, "arbitrary/file.rb"), bug8662)
+    assert_equal("arbitrary", Object.new.instance_eval("__dir__", "arbitrary/file.rb"), bug8662)
   end
 
   def test_alias_owner
     bug7613 = '[ruby-core:51105]'
+    bug7993 = '[Bug #7993]'
     c = Class.new {
       def foo
       end
+      prepend Module.new
+      attr_reader :zot
     }
     x = c.new
     class << x
       alias bar foo
     end
+    assert_equal(c, c.instance_method(:foo).owner)
     assert_equal(c, x.method(:foo).owner)
     assert_equal(x.singleton_class, x.method(:bar).owner)
     assert(x.method(:foo) != x.method(:bar), bug7613)
+    assert_equal(c, x.method(:zot).owner, bug7993)
+    assert_equal(c, c.instance_method(:zot).owner, bug7993)
   end
 
   def test_gced_bmethod

@@ -408,4 +408,106 @@ class TestSuper < Test::Unit::TestCase
     assert_equal([false, false], y.foo(false, false))
     assert_equal([1, 2, 3, false, 5], y.foo(1, 2, 3, false, 5))
   end
+
+  def test_missing_super_in_method_module
+    bug9315 = '[ruby-core:59358] [Bug #9315]'
+    a = Module.new do
+      def foo
+        super
+      end
+    end
+    b = Class.new do
+      include a
+    end
+    assert_raise(NoMethodError, bug9315) do
+      b.new.method(:foo).call
+    end
+  end
+
+  def test_module_super_in_method_module
+    bug9315 = '[ruby-core:59589] [Bug #9315]'
+    a = Module.new do
+      def foo
+        super
+      end
+    end
+    c = Class.new do
+      def foo
+        :ok
+      end
+    end
+    o = c.new.extend(a)
+    assert_nothing_raised(NoMethodError, bug9315) do
+      assert_equal(:ok, o.method(:foo).call, bug9315)
+    end
+  end
+
+  def test_missing_super_in_module_unbound_method
+    bug9377 = '[ruby-core:59619] [Bug #9377]'
+
+    a = Module.new do
+      def foo; super end
+    end
+
+    m = a.instance_method(:foo).bind(Object.new.extend(a))
+    assert_raise(NoMethodError, bug9377) do
+      m.call
+    end
+  end
+
+  def test_super_in_module_unbound_method
+    bug9721 = '[ruby-core:61936] [Bug #9721]'
+
+    a = Module.new do
+      def foo(result)
+        result << "A"
+      end
+    end
+
+    b = Module.new do
+      def foo(result)
+        result << "B"
+        super
+      end
+    end
+
+    um = b.instance_method(:foo)
+
+    m = um.bind(Object.new.extend(a))
+    result = []
+    assert_nothing_raised(NoMethodError, bug9721) do
+      m.call(result)
+    end
+    assert_equal(%w[B A], result, bug9721)
+
+    bug9740 = '[ruby-core:62017] [Bug #9740]'
+
+    b.module_eval do
+      define_method(:foo) do |result|
+        um.bind(self).call(result)
+      end
+    end
+
+    result.clear
+    o = Object.new.extend(a).extend(b)
+    assert_nothing_raised(NoMethodError, SystemStackError, bug9740) do
+      o.foo(result)
+    end
+    assert_equal(%w[B A], result, bug9721)
+  end
+
+  def test_from_eval
+    bug10263 = '[ruby-core:65122] [Bug #10263a]'
+    a = Class.new do
+      def foo
+        "A"
+      end
+    end
+    b = Class.new(a) do
+      def foo
+        binding.eval("super")
+      end
+    end
+    assert_equal("A", b.new.foo, bug10263)
+  end
 end

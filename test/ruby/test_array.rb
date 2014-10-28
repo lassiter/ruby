@@ -576,6 +576,29 @@ class TestArray < Test::Unit::TestCase
     assert_equal(3, a.count {|x| x % 2 == 1 })
     assert_equal(2, a.count(1) {|x| x % 2 == 1 })
     assert_raise(ArgumentError) { a.count(0, 1) }
+
+    bug8654 = '[ruby-core:56072]'
+    assert_in_out_err [], <<-EOS, ["0"], [], bug8654
+      a1 = []
+      a2 = Array.new(100) { |i| i }
+      a2.count do |i|
+        p i
+        a2.replace(a1) if i == 0
+      end
+    EOS
+
+    assert_in_out_err [], <<-EOS, ["[]", "0"], [], bug8654
+      ARY = Array.new(100) { |i| i }
+      class Fixnum
+        alias old_equal ==
+        def == other
+          ARY.replace([]) if self.equal?(0)
+          p ARY
+          self.equal?(other)
+        end
+      end
+      p ARY.count(42)
+    EOS
   end
 
   def test_delete
@@ -1672,8 +1695,8 @@ class TestArray < Test::Unit::TestCase
                       [2,2,2,2],[2,2,2,3],[2,2,3,3],[2,3,3,3],[3,3,3,3]],
                  a.repeated_combination(4).to_a.sort)
     assert_equal(@cls[], a.repeated_combination(-1).to_a)
-    assert_equal("abcde".each_char.to_a.repeated_combination(5).map{|a|a.sort}.sort,
-                 "edcba".each_char.to_a.repeated_combination(5).map{|a|a.sort}.sort)
+    assert_equal("abcde".each_char.to_a.repeated_combination(5).map{|e|e.sort}.sort,
+                 "edcba".each_char.to_a.repeated_combination(5).map{|e|e.sort}.sort)
     assert_equal(@cls[].repeated_combination(0).to_a, @cls[[]])
     assert_equal(@cls[].repeated_combination(1).to_a, @cls[])
 
@@ -1900,6 +1923,22 @@ class TestArray < Test::Unit::TestCase
 
   def test_reject
     assert_equal([1, 3], [0, 1, 2, 3].reject {|x| x % 2 == 0 })
+  end
+
+  def test_reject_with_callcc
+    respond_to?(:callcc, true) or require 'continuation'
+    bug9727 = '[ruby-dev:48101] [Bug #9727]'
+    cont = nil
+    a = [*1..10].reject do |i|
+      callcc {|c| cont = c} if !cont and i == 10
+      false
+    end
+    if a.size < 1000
+      a.unshift(:x)
+      cont.call
+    end
+    assert_equal(1000, a.size, bug9727)
+    assert_equal([:x, *1..10], a.uniq, bug9727)
   end
 
   def test_zip
@@ -2160,6 +2199,15 @@ class TestArray < Test::Unit::TestCase
 
   def test_combination2
     assert_equal(:called, (0..100).to_a.combination(50) { break :called }, "[ruby-core:29240] ... must be yielded even if 100C50 > signed integer")
+  end
+
+  def test_combination_clear
+    bug9939 = '[ruby-core:63149] [Bug #9939]'
+    assert_separately([], <<-'end;')
+      100_000.times {Array.new(1000)}
+      a = [*0..100]
+      a.combination(3) {|*,x| a.clear}
+    end;
   end
 
   def test_product2

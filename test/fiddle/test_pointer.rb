@@ -1,5 +1,8 @@
-require_relative 'helper'
-require_relative '../ruby/envutil'
+begin
+  require_relative 'helper'
+  require_relative '../ruby/envutil'
+rescue LoadError
+end
 
 module Fiddle
   class TestPointer < TestCase
@@ -227,5 +230,9 @@ module Fiddle
       assert_raise(DLError) {nullpo[0]}
       assert_raise(DLError) {nullpo[0] = 1}
     end
+
+    def test_no_memory_leak
+      assert_no_memory_leak(%w[-W0 -rfiddle.so], '', '100_000.times {Fiddle::Pointer.allocate}', rss: true)
+    end
   end
-end
+end if defined?(Fiddle)

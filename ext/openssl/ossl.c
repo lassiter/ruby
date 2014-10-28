@@ -293,10 +293,9 @@ ossl_to_der_if_possible(VALUE obj)
 static VALUE
 ossl_make_error(VALUE exc, const char *fmt, va_list args)
 {
-    char buf[BUFSIZ];
+    VALUE str = Qnil;
     const char *msg;
     long e;
-    int len = 0;
 
 #ifdef HAVE_ERR_PEEK_LAST_ERROR
     e = ERR_peek_last_error();
@@ -304,14 +303,20 @@ ossl_make_error(VALUE exc, const char *fmt, va_list args)
     e = ERR_peek_error();
 #endif
     if (fmt) {
-	len = vsnprintf(buf, BUFSIZ, fmt, args);
+	str = rb_vsprintf(fmt, args);
     }
-    if (len < BUFSIZ && e) {
+    if (e) {
 	if (dOSSL == Qtrue) /* FULL INFO */
 	    msg = ERR_error_string(e, NULL);
 	else
 	    msg = ERR_reason_error_string(e);
-	len += snprintf(buf+len, BUFSIZ-len, "%s%s", (len ? ": " : ""), msg);
+	if (NIL_P(str)) {
+	    if (msg) str = rb_str_new_cstr(msg);
+	}
+	else {
+	    if (RSTRING_LEN(str)) rb_str_cat2(str, ": ");
+	    rb_str_cat2(str, msg ? msg : "(null)");
+	}
     }
     if (dOSSL == Qtrue){ /* show all errors on the stack */
 	while ((e = ERR_get_error()) != 0){
@@ -320,8 +325,8 @@ ossl_make_error(VALUE exc, const char *fmt, va_list args)
     }
     ERR_clear_error();
 
-    if(len > BUFSIZ) len = rb_long2int(strlen(buf));
-    return rb_exc_new(exc, buf, len);
+    if (NIL_P(str)) str = rb_str_new(0, 0);
+    return rb_exc_new3(exc, str);
 }
 
 void
@@ -987,6 +992,11 @@ Init_openssl()
      * Version of OpenSSL the ruby OpenSSL extension was built with
      */
     rb_define_const(mOSSL, "OPENSSL_VERSION", rb_str_new2(OPENSSL_VERSION_TEXT));
+
+    /*
+     * Version of OpenSSL the ruby OpenSSL extension is running with
+     */
+    rb_define_const(mOSSL, "OPENSSL_LIBRARY_VERSION", rb_str_new2(SSLeay_version(SSLEAY_VERSION)));
 
     /*
      * Version number of OpenSSL the ruby OpenSSL extension was built with
