@@ -1,3 +1,48 @@
+Tue Jan 28 03:59:15 2014  NARUSE, Yui  <naruse@ruby-lang.org>
+
+	* configure.in: define USE_BUILTIN_FRAME_ADDRESS on x86_64
+	  even if __builtin_frame_address is not used now.
+	  By this, FreeBSD's clang can build ruby 1.8,
+	  and alloca(1) doesn't work on it.
+
+Fri Nov 22 12:43:52 2013  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* util.c (ruby_strtod): ignore too long fraction part, which does not
+	  affect the result.
+
+Thu Jun 27 20:55:23 2013  URABE Shyouhei  <shyouhei@ruby-lang.org>
+
+	* test/openssl/test_ssl.rb: Oops, sorry!
+
+Thu Jun 27 20:21:18 2013  URABE Shyouhei  <shyouhei@ruby-lang.org>
+
+	* ext/openssl/lib/openssl/ssl-internal.rb (OpenSSL::SSL#verify_certificate_identity):
+	  fix hostname verification. Patch by nahi.
+
+	* test/openssl/test_ssl.rb (OpenSSL#test_verify_certificate_identity):
+	  test for above.
+
+Sat May 18 23:34:50 2013  Kouhei Sutou  <kou@cozmixng.org>
+
+	* lib/rexml/document.rb: move entity_expansion_text_limit accessor to ...
+	* lib/rexml/rexml.rb: ... here to make rexml/text independent from
+	  REXML::Document. It causes circular require.
+	* lib/rexml/document.rb (REXML::Document.entity_expansion_text_limit):
+	  deprecated.
+	* lib/rexml/document.rb (REXML::Document.entity_expansion_text_limit=):
+	  deprecated.
+	* lib/rexml/text.rb: add missing require "rexml/rexml" for
+	  REXML.entity_expansion_text_limit.
+	  Reported by Robert Ulejczyk. Thanks!!! [ruby-core:52895] [Bug #7961]
+
+Sat May 18 23:34:50 2013  Aaron Patterson <aaron@tenderlovemaking.com>
+
+	* lib/rexml/document.rb (REXML::Document.entity_expansion_text_limit):
+	  new attribute to read/write entity expansion text limit.  the default
+	  limit is 10Kb.
+
+	* lib/rexml/text.rb (REXML::Text.unnormalize): check above attribute.
+
 Fri May  8 02:34:25 2009  Akinori MUSHA  <knu@iDaemons.org>
 
 	* Merge for JRuby by Charles Nutter <headius@headius.com> on
