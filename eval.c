@@ -763,7 +763,7 @@ rb_rescue2(VALUE (* b_proc) (ANYARGS), VALUE data1,
 	}
     }
     else {
-	th->cfp = cfp; /* restore */
+	rb_vm_rewind_cfp(th, cfp);
 
 	if (state == TAG_RAISE) {
 	    int handle = FALSE;
@@ -822,7 +822,7 @@ rb_protect(VALUE (* proc) (VALUE), VALUE data, int * state)
 	SAVE_ROOT_JMPBUF(th, result = (*proc) (data));
     }
     else {
-	th->cfp = cfp;
+	rb_vm_rewind_cfp(th, cfp);
     }
     MEMCPY(&(th)->root_jmpbuf, &org_jmpbuf, rb_jmpbuf_t, 1);
     th->protect_tag = protect_tag.prev;
@@ -976,13 +976,6 @@ prev_frame_func(void)
     rb_control_frame_t *prev_cfp = previous_frame(GET_THREAD());
     if (!prev_cfp) return 0;
     return frame_func_id(prev_cfp);
-}
-
-void
-rb_frame_pop(void)
-{
-    rb_thread_t *th = GET_THREAD();
-    th->cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(th->cfp);
 }
 
 /*

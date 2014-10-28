@@ -1067,10 +1067,15 @@ vm_caller_setup_args(const rb_thread_t *th, rb_control_frame_t *cfp, rb_call_inf
 }
 
 static inline int
-vm_callee_setup_keyword_arg(const rb_iseq_t *iseq, int argc, int m, VALUE *orig_argv, VALUE *kwd)
+vm_callee_setup_keyword_arg(rb_thread_t *th, const rb_iseq_t *iseq, int argc, int m, VALUE *orig_argv, VALUE *kwd)
 {
     VALUE keyword_hash = 0, orig_hash;
     int optional = iseq->arg_keywords - iseq->arg_keyword_required;
+    VALUE *const sp = th->cfp->sp;
+    const int mark_stack_len = th->mark_stack_len;
+
+    th->cfp->sp += argc;
+    th->mark_stack_len -= argc;
 
     if (argc > m &&
 	!NIL_P(orig_hash = rb_check_hash_type(orig_argv[argc-1])) &&
@@ -1085,9 +1090,13 @@ vm_callee_setup_keyword_arg(const rb_iseq_t *iseq, int argc, int m, VALUE *orig_
     rb_get_kwargs(keyword_hash, iseq->arg_keyword_table, iseq->arg_keyword_required,
 		  (iseq->arg_keyword_check ? optional : -1-optional),
 		  NULL);
+
     if (!keyword_hash) {
 	keyword_hash = rb_hash_new();
     }
+
+    th->cfp->sp = sp;
+    th->mark_stack_len = mark_stack_len;
 
     *kwd = keyword_hash;
 
@@ -1111,7 +1120,7 @@ vm_callee_setup_arg_complex(rb_thread_t *th, rb_call_info_t *ci, const rb_iseq_t
 
     /* keyword argument */
     if (iseq->arg_keyword != -1) {
-	argc = vm_callee_setup_keyword_arg(iseq, argc, min, orig_argv, &keyword_hash);
+	argc = vm_callee_setup_keyword_arg(th, iseq, argc, min, orig_argv, &keyword_hash);
     }
 
     /* mandatory */
@@ -1593,16 +1602,10 @@ vm_call_bmethod_body(rb_thread_t *th, rb_call_info_t *ci, const VALUE *argv)
     rb_proc_t *proc;
     VALUE val;
 
-    RUBY_DTRACE_METHOD_ENTRY_HOOK(th, ci->me->klass, ci->me->called_id);
-    EXEC_EVENT_HOOK(th, RUBY_EVENT_CALL, ci->recv, ci->me->called_id, ci->me->klass, Qnil);
-
     /* control block frame */
     th->passed_bmethod_me = ci->me;
     GetProcPtr(ci->me->def->body.proc, proc);
     val = vm_invoke_proc(th, proc, ci->recv, ci->defined_class, ci->argc, argv, ci->blockptr);
-
-    EXEC_EVENT_HOOK(th, RUBY_EVENT_RETURN, ci->recv, ci->me->called_id, ci->me->klass, val);
-    RUBY_DTRACE_METHOD_RETURN_HOOK(th, ci->me->klass, ci->me->called_id);
 
     return val;
 }
@@ -1788,6 +1791,10 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 		klass = RCLASS_ORIGIN(klass);
 	      zsuper_method_dispatch:
 		klass = RCLASS_SUPER(klass);
+		if (!klass) {
+		    ci->me = 0;
+		    goto start_method_dispatch;
+		}
 		ci_temp = *ci;
 		ci = &ci_temp;
 
@@ -2218,7 +2225,7 @@ vm_yield_setup_block_args(rb_thread_t *th, const rb_iseq_t * iseq,
 
     /* keyword argument */
     if (iseq->arg_keyword != -1) {
-	argc = vm_callee_setup_keyword_arg(iseq, argc, min, argv, &keyword_hash);
+	argc = vm_callee_setup_keyword_arg(th, iseq, argc, min, argv, &keyword_hash);
     }
 
     for (i=argc; i<m; i++) {

@@ -268,4 +268,27 @@ EOS
       }
     }
   end if Process.respond_to?(:kill) and Signal.list.key?('HUP')
+
+  def test_ignored_interrupt
+    bug9820 = '[ruby-dev:48203] [Bug #9820]'
+    assert_separately(['-', bug9820], <<-'end;') #    begin
+      bug = ARGV.shift
+      trap(:INT, "IGNORE")
+      assert_nothing_raised(SignalException, bug) do
+        Process.kill(:INT, $$)
+      end
+    end;
+
+    if trap = Signal.list['TRAP']
+      bug9820 = '[ruby-dev:48592] [Bug #9820]'
+      status = assert_in_out_err(['-e', 'Process.kill(:TRAP, $$)'])
+      assert_predicate(status, :signaled?, bug9820)
+      assert_equal(trap, status.termsig, bug9820)
+    end
+
+    if Signal.list['CONT']
+      bug9820 = '[ruby-dev:48606] [Bug #9820]'
+      assert_ruby_status(['-e', 'Process.kill(:CONT, $$)'])
+    end
+  end if Process.respond_to?(:kill)
 end

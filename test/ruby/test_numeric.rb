@@ -1,4 +1,5 @@
 require 'test/unit'
+require_relative 'envutil'
 
 class TestNumeric < Test::Unit::TestCase
   class DummyNumeric < Numeric
@@ -14,6 +15,19 @@ class TestNumeric < Test::Unit::TestCase
     assert_equal(Float, b.class)
 
     assert_raise(TypeError) { -Numeric.new }
+
+    EnvUtil.with_default_external(Encoding::UTF_8) do
+      assert_raise_with_message(TypeError, /:\u{3042}/) {1+:"\u{3042}"}
+      assert_raise_with_message(TypeError, /:\u{3042}/) {1&:"\u{3042}"}
+      assert_raise_with_message(TypeError, /:\u{3042}/) {1|:"\u{3042}"}
+      assert_raise_with_message(TypeError, /:\u{3042}/) {1^:"\u{3042}"}
+    end
+    EnvUtil.with_default_external(Encoding::US_ASCII) do
+      assert_raise_with_message(TypeError, /:"\\u3042"/) {1+:"\u{3042}"}
+      assert_raise_with_message(TypeError, /:"\\u3042"/) {1&:"\u{3042}"}
+      assert_raise_with_message(TypeError, /:"\\u3042"/) {1|:"\u{3042}"}
+      assert_raise_with_message(TypeError, /:"\\u3042"/) {1^:"\u{3042}"}
+    end
   end
 
   def test_dummynumeric
@@ -239,6 +253,14 @@ class TestNumeric < Test::Unit::TestCase
     assert_nothing_raised { 1.step(by: 0).size }
     assert_nothing_raised { 1.step(by: nil) }
     assert_nothing_raised { 1.step(by: nil).size }
+
+    bug9811 = '[ruby-dev:48177] [Bug #9811]'
+    assert_raise(ArgumentError, bug9811) { 1.step(10, foo: nil) {} }
+    assert_raise(ArgumentError, bug9811) { 1.step(10, foo: nil).size }
+    assert_raise(ArgumentError, bug9811) { 1.step(10, to: 11) {} }
+    assert_raise(ArgumentError, bug9811) { 1.step(10, to: 11).size }
+    assert_raise(ArgumentError, bug9811) { 1.step(10, 1, by: 11) {} }
+    assert_raise(ArgumentError, bug9811) { 1.step(10, 1, by: 11).size }
 
     assert_equal(bignum*2+1, (-bignum).step(bignum, 1).size)
     assert_equal(bignum*2, (-bignum).step(bignum-1, 1).size)

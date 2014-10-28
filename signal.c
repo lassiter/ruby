@@ -343,6 +343,10 @@ ruby_default_signal(int sig)
     raise(sig);
 }
 
+static RETSIGTYPE sighandler(int sig);
+static int signal_ignored(int sig);
+static void signal_enque(int sig);
+
 /*
  *  call-seq:
  *     Process.kill(signal, pid, ...)    -> fixnum
@@ -429,6 +433,8 @@ rb_f_kill(int argc, VALUE *argv)
 	break;
     }
 
+    if (argc <= 1) return INT2FIX(0);
+
     if (sig < 0) {
 	sig = -sig;
 	for (i=1; i<argc; i++) {
@@ -437,8 +443,48 @@ rb_f_kill(int argc, VALUE *argv)
 	}
     }
     else {
+	const rb_pid_t self = (GET_THREAD() == GET_VM()->main_thread) ? getpid() : -1;
+	int wakeup = 0;
+
 	for (i=1; i<argc; i++) {
-	    ruby_kill(NUM2PIDT(argv[i]), sig);
+	    rb_pid_t pid = NUM2PIDT(argv[i]);
+
+	    if ((sig != 0) && (self != -1) && (pid == self)) {
+		int t;
+		/*
+		 * When target pid is self, many caller assume signal will be
+		 * delivered immediately and synchronously.
+		 */
+		switch (sig) {
+		  case SIGSEGV:
+#ifdef SIGBUS
+		  case SIGBUS:
+#endif
+#ifdef SIGKILL
+		  case SIGKILL:
+#endif
+#ifdef SIGSTOP
+		  case SIGSTOP:
+#endif
+		    ruby_kill(pid, sig);
+		    break;
+		  default:
+		    t = signal_ignored(sig);
+		    if (t) {
+			if (t < 0 && kill(pid, sig))
+			    rb_sys_fail(0);
+			break;
+		    }
+		    signal_enque(sig);
+		    wakeup = 1;
+		}
+	    }
+	    else if (kill(pid, sig) < 0) {
+		rb_sys_fail(0);
+	    }
+	}
+	if (wakeup) {
+	    rb_threadptr_check_signal(GET_VM()->main_thread);
 	}
     }
     rb_thread_execute_interrupts(rb_thread_current());
@@ -543,7 +589,10 @@ ruby_signal(int signum, sighandler_t handler)
 	    rb_bug_errno("sigaction", errno);
 	}
     }
-    return old.sa_handler;
+    if (old.sa_flags & SA_SIGINFO)
+	return (sighandler_t)old.sa_sigaction;
+    else
+	return old.sa_handler;
 }
 
 sighandler_t
@@ -567,11 +616,35 @@ ruby_nativethread_signal(int signum, sighandler_t handler)
 #endif
 #endif
 
-static RETSIGTYPE
-sighandler(int sig)
+static int
+signal_ignored(int sig)
+{
+    sighandler_t func;
+#ifdef POSIX_SIGNAL
+    struct sigaction old;
+    (void)VALGRIND_MAKE_MEM_DEFINED(&old, sizeof(old));
+    if (sigaction(sig, NULL, &old) < 0) return FALSE;
+    func = old.sa_handler;
+#else
+    sighandler_t old = signal(sig, SIG_DFL);
+    signal(sig, old);
+    func = old;
+#endif
+    if (func == SIG_IGN) return 1;
+    return func == sighandler ? 0 : -1;
+}
+
+static void
+signal_enque(int sig)
 {
     ATOMIC_INC(signal_buff.cnt[sig]);
     ATOMIC_INC(signal_buff.size);
+}
+
+static RETSIGTYPE
+sighandler(int sig)
+{
+    signal_enque(sig);
     rb_thread_wakeup_timer_thread();
 #if !defined(BSD_SIGNAL) && !defined(POSIX_SIGNAL)
     ruby_signal(sig, sighandler);
@@ -648,7 +721,14 @@ check_stack_overflow(const uintptr_t addr, const ucontext_t *ctx)
     /* SP in ucontext is not decremented yet when `push` failed, so
      * the fault page can be the next. */
     if (sp_page == fault_page || sp_page == fault_page + 1) {
-	ruby_thread_stack_overflow(GET_THREAD());
+	rb_thread_t *th = ruby_current_thread;
+	if ((uintptr_t)th->tag->buf / pagesize == sp_page) {
+	    /* drop the last tag if it is close to the fault,
+	     * otherwise it can cause stack overflow again at the same
+	     * place. */
+	    th->tag = th->tag->prev;
+	}
+	ruby_thread_stack_overflow(th);
     }
 }
 #else
@@ -656,7 +736,7 @@ static void
 check_stack_overflow(const void *addr)
 {
     int ruby_stack_overflowed_p(const rb_thread_t *, const void *);
-    rb_thread_t *th = GET_THREAD();
+    rb_thread_t *th = ruby_current_thread;
     if (ruby_stack_overflowed_p(th, addr)) {
 	ruby_thread_stack_overflow(th);
     }
