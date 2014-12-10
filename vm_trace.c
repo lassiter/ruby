@@ -21,11 +21,9 @@
  *
  */
 
-#include "ruby/ruby.h"
-#include "ruby/debug.h"
-#include "ruby/encoding.h"
-
 #include "internal.h"
+#include "ruby/debug.h"
+
 #include "vm_core.h"
 #include "eval_intern.h"
 
@@ -331,8 +329,10 @@ rb_threadptr_exec_event_hooks_orig(rb_trace_arg_t *trace_arg, int pop_p)
 	    trace_arg->self != rb_mRubyVMFrozenCore /* skip special methods. TODO: remove it. */) {
 	    const VALUE errinfo = th->errinfo;
 	    const int outer_state = th->state;
-	    const VALUE old_recursive = rb_threadptr_reset_recursive_data(th);
+	    const VALUE old_recursive = th->local_storage_recursive_hash;
 	    int state = 0;
+
+	    th->local_storage_recursive_hash = th->local_storage_recursive_hash_for_trace;
 	    th->state = 0;
 	    th->errinfo = Qnil;
 
@@ -352,7 +352,9 @@ rb_threadptr_exec_event_hooks_orig(rb_trace_arg_t *trace_arg, int pop_p)
 	  terminate:
 	    th->trace_arg = 0;
 	    th->vm->trace_running--;
-	    rb_threadptr_restore_recursive_data(th, old_recursive);
+
+	    th->local_storage_recursive_hash_for_trace = th->local_storage_recursive_hash;
+	    th->local_storage_recursive_hash = old_recursive;
 
 	    if (state) {
 		if (pop_p) {
@@ -667,7 +669,7 @@ tp_memsize(const void *ptr)
 static const rb_data_type_t tp_data_type = {
     "tracepoint",
     {tp_mark, RUBY_TYPED_NEVER_FREE, tp_memsize,},
-    NULL, NULL, RUBY_TYPED_FREE_IMMEDIATELY
+    0, 0, RUBY_TYPED_FREE_IMMEDIATELY
 };
 
 static VALUE

@@ -12,13 +12,12 @@
 
 **********************************************************************/
 
-#include <ruby/ruby.h>
+#include "internal.h"
 #include <ruby/st.h>
 #include <ruby/io.h>
 #include <ruby/re.h>
 #include "node.h"
 #include "gc.h"
-#include "internal.h"
 
 /*
  *  call-seq:
@@ -519,7 +518,7 @@ iow_size(const void *ptr)
 static const rb_data_type_t iow_data_type = {
     "ObjectSpace::InternalObjectWrapper",
     {iow_mark, 0, iow_size,},
-    NULL, NULL, RUBY_TYPED_FREE_IMMEDIATELY
+    0, 0, RUBY_TYPED_FREE_IMMEDIATELY
 };
 
 static VALUE rb_mInternalObjectWrapper;

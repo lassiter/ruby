@@ -11,14 +11,13 @@
 
 **********************************************************************/
 
-#include "ruby/ruby.h"
+#include "internal.h"
 #include "vm_core.h"
 #include <signal.h>
 #include <stdio.h>
 #include <errno.h>
 #include "ruby_atomic.h"
 #include "eval_intern.h"
-#include "internal.h"
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
@@ -374,6 +373,8 @@ static void signal_enque(int sig);
  *  a POSIX signal name (either with or without a +SIG+ prefix). If _signal_ is
  *  negative (or starts with a minus sign), kills process groups instead of
  *  processes. Not all signals are available on all platforms.
+ *  The keys and values of +Signal.list+ are known signal names and numbers,
+ *  respectively.
  *
  *     pid = fork do
  *        Signal.trap("HUP") { puts "Ouch!"; exit }
@@ -839,8 +840,6 @@ ruby_abort(void)
 
 }
 
-extern int ruby_disable_gc;
-
 #ifdef SIGSEGV
 static RETSIGTYPE
 sigsegv(int sig SIGINFO_ARG)
@@ -1298,15 +1297,12 @@ install_sighandler(int signum, sighandler_t handler)
 {
     sighandler_t old;
 
-    /* At this time, there is no subthread. Then sigmask guarantee atomics. */
-    rb_disable_interrupt();
     old = ruby_signal(signum, handler);
     if (old == SIG_ERR) return -1;
     /* signal handler should be inherited during exec. */
     if (old != SIG_DFL) {
 	ruby_signal(signum, old);
     }
-    rb_enable_interrupt();
     return 0;
 }
 #ifndef __native_client__
@@ -1319,7 +1315,6 @@ init_sigchld(int sig)
 {
     sighandler_t oldfunc;
 
-    rb_disable_interrupt();
     oldfunc = ruby_signal(sig, SIG_DFL);
     if (oldfunc == SIG_ERR) return -1;
     if (oldfunc != SIG_DFL && oldfunc != SIG_IGN) {
@@ -1328,7 +1323,6 @@ init_sigchld(int sig)
     else {
 	GET_VM()->trap_list[sig].cmd = 0;
     }
-    rb_enable_interrupt();
     return 0;
 }
 #  ifndef __native_client__
@@ -1405,6 +1399,9 @@ Init_signal(void)
     rb_alias(rb_eSignal, rb_intern_const("signm"), rb_intern_const("message"));
     rb_define_method(rb_eInterrupt, "initialize", interrupt_init, -1);
 
+    /* At this time, there is no subthread. Then sigmask guarantee atomics. */
+    rb_disable_interrupt();
+
     install_sighandler(SIGINT, sighandler);
 #ifdef SIGHUP
     install_sighandler(SIGHUP, sighandler);
@@ -1448,4 +1445,6 @@ Init_signal(void)
 #elif defined(SIGCHLD)
     init_sigchld(SIGCHLD);
 #endif
+
+    rb_enable_interrupt();
 }

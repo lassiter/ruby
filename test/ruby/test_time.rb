@@ -2,7 +2,6 @@ require 'test/unit'
 require 'delegate'
 require 'timeout'
 require 'delegate'
-require_relative 'envutil'
 
 class TestTime < Test::Unit::TestCase
   def setup
@@ -172,6 +171,7 @@ class TestTime < Test::Unit::TestCase
     assert_equal(100000, Time.at(0.0001).nsec)
     assert_equal(10000, Time.at(0.00001).nsec)
     assert_equal(3000, Time.at(0.000003).nsec)
+    assert_equal(200, Time.at(0.0000002r).nsec)
     assert_equal(199, Time.at(0.0000002).nsec)
     assert_equal(10, Time.at(0.00000001).nsec)
     assert_equal(1, Time.at(0.000000001).nsec)

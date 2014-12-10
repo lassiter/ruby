@@ -46,10 +46,13 @@ if test "`RUBYOPT=- $BASERUBY -e 'p 42' 2>/dev/null`" = 42; then
 	BASERUBY="$BASERUBY --disable=gems"
     fi
     $BASERUBY -C "$srcdir/tool" downloader.rb -e gnu config.guess config.sub
+    HAVE_BASERUBY=yes
 else
     BASERUBY="echo executable host ruby is required.  use --with-baseruby option.; false"
+    HAVE_BASERUBY=no
 fi
 AC_SUBST(BASERUBY)
+AC_SUBST(HAVE_BASERUBY)
 
 AC_DEFUN([RUBY_MINGW32],
 [AS_CASE(["$host_os"],
@@ -494,7 +497,9 @@ if test "$GCC" = yes; then
     linker_flag=-Wl,
     : ${optflags=-O3}
     gcc_major=`echo =__GNUC__ | $CC -E -xc - | sed '/^=/!d;s///'`
+    gcc_minor=`echo =__GNUC_MINOR__ | $CC -E -xc - | sed '/^=/!d;s///'`
     test -n "$gcc_major" || gcc_major=0
+    test -n "$gcc_minor" || gcc_minor=0
     # RUBY_APPEND_OPTIONS(XCFLAGS, ["-include ruby/config.h" "-include ruby/missing.h"])
 else
     linker_flag=
@@ -1001,6 +1006,9 @@ AS_CASE(["$target_os"],
 		ac_cv_lib_crypt_crypt=no
 		ac_cv_func_fdatasync=no # Mac OS X wrongly reports it has fdatasync()
 		ac_cv_func_vfork=no
+		if test $gcc_major -lt 4 -o \( $gcc_major -eq 4 -a $gcc_minor -lt 3 \); then
+		    ac_cv_func___builtin_setjmp=no
+		fi
                 AC_CACHE_CHECK(for broken crypt with 8bit chars, rb_cv_broken_crypt,
                     [AC_TRY_RUN([
 #include <stdio.h>
@@ -3232,11 +3240,21 @@ AS_CASE([",$EXTSTATIC,"], [,static,|*,enc,*], [
   EXTOBJS='ext/extinit.$(OBJEXT)'
   AC_DEFINE_UNQUOTED(EXTSTATIC, 1)
   AC_SUBST(ENCSTATIC, static)
+], [
+  ENCOBJS='dmyenc.$(OBJEXT)'
+  EXTOBJS='dmyext.$(OBJEXT)'
 ])
 AC_SUBST(ENCOBJS)
 AC_SUBST(EXTOBJS)
 
-if test -f "$srcdir/ext/Setup.$target_os"; then
+AC_ARG_WITH(setup,
+	    AS_HELP_STRING([--with-setup=SETUP], [use extension libraries setup]),
+	    [setup=$withval])
+if test -n "$setup"; then
+    if ! test -f "ext/$setup" -o -f "$srcdir/ext/$setup"; then
+	AC_MSG_ERROR(Setup file $setup not found under ext or $srcdir/ext)
+    fi
+elif test -f "$srcdir/ext/Setup.$target_os"; then
     setup="Setup.$target_os"
 else
     setup=
@@ -3982,7 +4000,7 @@ if test ${RUBY_LIB_VERSION_STYLE+set}; then
 elif test -z "${ruby_version}"; then
     AC_MSG_ERROR([No ruby version, No place for bundled libraries])
 else
-    RUBY_LIB_VERSION="\"${ruby_version}\""
+    RUBY_LIB_VERSION="${ruby_version}"
 fi
 AC_SUBST(RUBY_LIB_VERSION_STYLE)
 AC_SUBST(RUBY_LIB_VERSION)

@@ -11,11 +11,9 @@
 
 **********************************************************************/
 
-#include "ruby/ruby.h"
+#include "internal.h"
 #include "ruby/st.h"
 #include "ruby/util.h"
-#include "ruby/encoding.h"
-#include "internal.h"
 #include <errno.h>
 #include "probes.h"
 #include "id.h"
@@ -173,7 +171,6 @@ static const struct st_hash_type objhash = {
     rb_any_hash,
 };
 
-extern const struct st_hash_type st_hashtype_num;
 #define identhash st_hashtype_num
 
 typedef int st_foreach_func(st_data_t, st_data_t, st_data_t);
@@ -901,7 +898,7 @@ rb_hash_default_proc(VALUE hash)
  *     h["cat"]   #=> "catcat"
  */
 
-static VALUE
+VALUE
 rb_hash_set_default_proc(VALUE hash, VALUE proc)
 {
     VALUE b;
@@ -1854,7 +1851,7 @@ rb_hash_values(VALUE hash)
  *
  */
 
-static VALUE
+VALUE
 rb_hash_has_key(VALUE hash, VALUE key)
 {
     if (!RHASH(hash)->ntbl)

@@ -50,6 +50,7 @@ ENV["RM"] ||= "rm -f"
 ENV["MINIRUBY"] ||= "ruby"
 ENV["PROGRAM"] ||= "ruby"
 ENV["AUTOCONF"] ||= "autoconf"
+ENV["BUILTIN_TRANSOBJS"] ||= "newline.o"
 
 class String
   # for older ruby
@@ -214,7 +215,9 @@ def package(rev, destdir)
     v = n
   end
   system(*%W"patch -d #{v} -p0 -i #{$patch_file}") if $patch_file
-  "take a breath, and go ahead".scan(/./) {|c|print c; sleep(c == "," ? 0.7 : 0.05)}; puts
+  if !$exported or $patch_file
+    "take a breath, and go ahead".scan(/./) {|c|print c; sleep(c == "," ? 0.7 : 0.05)}; puts
+  end
   def (clean = []).add(n) push(n); n end
   Dir.chdir(v) do
     File.open(clean.add("cross.rb"), "w") do |f|
@@ -266,6 +269,9 @@ def package(rev, destdir)
                MINIRUBY=#{miniruby}
                RUNRUBY=#{miniruby}
                RUBY=#{ENV["RUBY"]}
+               HAVE_BASERUBY=yes
+               BASERUBY=#{ENV["BASERUBY"]}
+               PWD=#{Dir.pwd}
                prereq]
       IO.popen(cmd, "w") do |f|
         f.puts mk

@@ -4,8 +4,6 @@ require 'test/unit'
 require 'tmpdir'
 require 'tempfile'
 
-require_relative 'envutil'
-
 class TestRubyOptions < Test::Unit::TestCase
   def write_file(filename, content)
     File.open(filename, "w") {|f|
@@ -693,6 +691,42 @@ class TestRubyOptions < Test::Unit::TestCase
       assert_in_out_err(["-C", dir, a], "", ["42"], [], bug3851)
       File.unlink(File.join(dir, a))
       assert_in_out_err(["-C", dir, a], "", [], /LoadError/, bug3851)
+    end
+  end
+
+  if /mswin|mingw/ =~ RUBY_PLATFORM
+    def test_command_line_glob_nonascii
+      bug10555 = '[ruby-dev:48752] [Bug #10555]'
+      name = "\u{3042}.txt"
+      expected = name.encode("locale") rescue "?.txt"
+      with_tmpchdir do |dir|
+        open(name, "w") {}
+        assert_in_out_err(["-e", "puts ARGV", "?.txt"], "", [expected], [],
+                          bug10555, encoding: "locale")
+      end
+    end
+
+    def test_command_line_progname_nonascii
+      bug10555 = '[ruby-dev:48752] [Bug #10555]'
+      name = "\u{3042}.rb"
+      expected = name.encode("locale") rescue "?.rb"
+      with_tmpchdir do |dir|
+        open(name, "w") {|f| f.puts "puts File.basename($0)"}
+        assert_in_out_err([name], "", [expected], [],
+                          bug10555, encoding: "locale")
+      end
+    end
+  end
+
+  if /mswin|mingw/ =~ RUBY_PLATFORM
+    Ougai = %W[\u{68ee}O\u{5916}.txt \u{68ee 9d0e 5916}.txt \u{68ee 9dd7 5916}.txt]
+    def test_command_line_glob_noncodepage
+      with_tmpchdir do |dir|
+        Ougai.each {|f| open(f, "w") {}}
+        assert_in_out_err(["-Eutf-8", "-e", "puts ARGV", "*"], "", Ougai, encoding: "utf-8")
+        ougai = Ougai.map {|f| f.encode("locale", replace: "?")}
+        assert_in_out_err(["-e", "puts ARGV", "*.txt"], "", ougai)
+      end
     end
   end
 

@@ -1,5 +1,4 @@
 require 'test/unit'
-require_relative 'envutil'
 
 # use of $= is deprecated after 1.7.1
 def pre_1_7_1
@@ -2057,6 +2056,11 @@ class TestString < Test::Unit::TestCase
 
   def test_setter
     assert_raise(TypeError) { $/ = 1 }
+    name = "\u{5206 884c}"
+    assert_separately([], <<-"end;") #    do
+      alias $#{name} $/
+      assert_raise_with_message(TypeError, /\\$#{name}/) { $#{name} = 1 }
+    end;
   end
 
   def test_to_id
