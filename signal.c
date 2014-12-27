@@ -24,6 +24,9 @@
 #ifdef HAVE_SYS_UIO_H
 #include <sys/uio.h>
 #endif
+#ifdef HAVE_UCONTEXT_H
+#include <ucontext.h>
+#endif
 
 #ifdef HAVE_VALGRIND_MEMCHECK_H
 # include <valgrind/memcheck.h>
@@ -631,6 +634,17 @@ posix_signal(int signum, sighandler_t handler)
     return ruby_signal(signum, handler);
 }
 
+#elif defined _WIN32
+static inline sighandler_t
+ruby_signal(int signum, sighandler_t handler)
+{
+    if (signum == SIGKILL) {
+	errno = EINVAL;
+	return SIG_ERR;
+    }
+    return signal(signum, handler);
+}
+
 #else /* !POSIX_SIGNAL */
 #define ruby_signal(sig,handler) (/* rb_trap_accept_nativethreads[(sig)] = 0,*/ signal((sig),(handler)))
 #if 0 /* def HAVE_NATIVETHREAD */
@@ -729,32 +743,45 @@ rb_get_next_signal(void)
     return sig;
 }
 
+#if defined SIGSEGV || defined SIGBUS || defined SIGILL || defined SIGFPE
+static const char *received_signal;
+# define clear_received_signal() (void)(received_signal = 0)
+#else
+# define clear_received_signal() ((void)0)
+#endif
 
 #if defined(USE_SIGALTSTACK) || defined(_WIN32)
 NORETURN(void ruby_thread_stack_overflow(rb_thread_t *th));
-# if !(defined(HAVE_UCONTEXT_H) && (defined __i386__ || defined __x86_64__))
+# if !(defined(HAVE_UCONTEXT_H) && (defined __i386__ || defined __x86_64__ || defined __amd64__))
 # elif defined __linux__
 #   define USE_UCONTEXT_REG 1
 # elif defined __APPLE__
+#   define USE_UCONTEXT_REG 1
+# elif defined __FreeBSD__
 #   define USE_UCONTEXT_REG 1
 # endif
 # ifdef USE_UCONTEXT_REG
 static void
 check_stack_overflow(const uintptr_t addr, const ucontext_t *ctx)
 {
+    const DEFINE_MCONTEXT_PTR(mctx, ctx);
 # if defined __linux__
-    const mcontext_t *mctx = &ctx->uc_mcontext;
 #   if defined REG_RSP
     const greg_t sp = mctx->gregs[REG_RSP];
 #   else
     const greg_t sp = mctx->gregs[REG_ESP];
 #   endif
 # elif defined __APPLE__
-    const mcontext_t mctx = ctx->uc_mcontext;
 #   if defined(__LP64__)
     const uintptr_t sp = mctx->__ss.__rsp;
 #   else
     const uintptr_t sp = mctx->__ss.__esp;
+#   endif
+# elif defined __FreeBSD__
+#   if defined(__amd64__)
+    const __register_t sp = mctx->mc_rsp;
+#   else
+    const __register_t sp = mctx->mc_esp;
 #   endif
 # endif
     enum {pagesize = 4096};
@@ -771,6 +798,7 @@ check_stack_overflow(const uintptr_t addr, const ucontext_t *ctx)
 	     * place. */
 	    th->tag = th->tag->prev;
 	}
+	clear_received_signal();
 	ruby_thread_stack_overflow(th);
     }
 }
@@ -781,6 +809,7 @@ check_stack_overflow(const void *addr)
     int ruby_stack_overflowed_p(const rb_thread_t *, const void *);
     rb_thread_t *th = ruby_current_thread;
     if (ruby_stack_overflowed_p(th, addr)) {
+	clear_received_signal();
 	ruby_thread_stack_overflow(th);
     }
 }
@@ -865,8 +894,7 @@ sigill(int sig SIGINFO_ARG)
 static void
 check_reserved_signal_(const char *name, size_t name_len)
 {
-    static const char *received;
-    const char *prev = ATOMIC_PTR_EXCHANGE(received, name);
+    const char *prev = ATOMIC_PTR_EXCHANGE(received_signal, name);
 
     if (prev) {
 	ssize_t RB_UNUSED_VAR(err);

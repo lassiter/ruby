@@ -18,6 +18,10 @@
 #include "insns.inc"
 #include "insns_info.inc"
 
+#ifdef HAVE_DLADDR
+# include <dlfcn.h>
+#endif
+
 #define FIXNUM_INC(n, i) ((n)+(INT2FIX(i)&~FIXNUM_FLAG))
 #define FIXNUM_OR(n, i) ((n)|INT2FIX(i))
 
@@ -340,7 +344,7 @@ static int iseq_setup(rb_iseq_t *iseq, LINK_ANCHOR *anchor);
 static int iseq_optimize(rb_iseq_t *iseq, LINK_ANCHOR *anchor);
 static int iseq_insns_unification(rb_iseq_t *iseq, LINK_ANCHOR *anchor);
 
-static int iseq_set_local_table(rb_iseq_t *iseq, ID *tbl);
+static int iseq_set_local_table(rb_iseq_t *iseq, const ID *tbl);
 static int iseq_set_exception_local_table(rb_iseq_t *iseq);
 static int iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *anchor, NODE * node);
 
@@ -1332,7 +1336,7 @@ iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *optargs, NODE *node_args)
 }
 
 static int
-iseq_set_local_table(rb_iseq_t *iseq, ID *tbl)
+iseq_set_local_table(rb_iseq_t *iseq, const ID *tbl)
 {
     int size;
 
@@ -1598,6 +1602,9 @@ iseq_set_sequence(rb_iseq_t *iseq, LINK_ANCHOR *anchor)
 				(struct rb_global_entry *)(operands[j] & (~1));
 			    generated_iseq[pos + 1 + j] = (VALUE)entry;
 			}
+			break;
+		      case TS_FUNCPTR:
+			generated_iseq[pos + 1 + j] = operands[j];
 			break;
 		      default:
 			rb_compile_error(RSTRING_PTR(iseq->location.path), iobj->line_no,
@@ -4398,8 +4405,9 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * node, int poped)
 	 *   "literal".freeze -> opt_str_freeze("literal")
 	 */
 	if (node->nd_recv && nd_type(node->nd_recv) == NODE_STR &&
-	    node->nd_mid == idFreeze && node->nd_args == NULL)
-	{
+	    node->nd_mid == idFreeze && node->nd_args == NULL &&
+	    iseq->compile_data->current_block == Qfalse &&
+	    iseq->compile_data->option->specialized_instruction) {
 	    VALUE str = rb_fstring(node->nd_recv->nd_lit);
 	    iseq_add_mark_object(iseq, str);
 	    ADD_INSN1(ret, line, opt_str_freeze, str);
@@ -4413,8 +4421,9 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * node, int poped)
 	 */
 	if (node->nd_mid == idAREF && !private_recv_p(node) && node->nd_args &&
 	    nd_type(node->nd_args) == NODE_ARRAY && node->nd_args->nd_alen == 1 &&
-	    nd_type(node->nd_args->nd_head) == NODE_STR)
-	{
+	    nd_type(node->nd_args->nd_head) == NODE_STR &&
+	    iseq->compile_data->current_block == Qfalse &&
+	    iseq->compile_data->option->specialized_instruction) {
 	    VALUE str = rb_fstring(node->nd_args->nd_head->nd_lit);
 	    node->nd_args->nd_head->nd_lit = str;
 	    COMPILE(ret, "recv", node->nd_recv);
@@ -5409,7 +5418,9 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * node, int poped)
 	 */
 	if (node->nd_mid == idASET && !private_recv_p(node) && node->nd_args &&
 	    nd_type(node->nd_args) == NODE_ARRAY && node->nd_args->nd_alen == 2 &&
-	    nd_type(node->nd_args->nd_head) == NODE_STR)
+	    nd_type(node->nd_args->nd_head) == NODE_STR &&
+	    iseq->compile_data->current_block == Qfalse &&
+	    iseq->compile_data->option->specialized_instruction)
 	{
 	    VALUE str = rb_fstring(node->nd_args->nd_head->nd_lit);
 	    node->nd_args->nd_head->nd_lit = str;
@@ -5599,6 +5610,19 @@ insn_data_to_s_detail(INSN *iobj)
 		}
 	      case TS_CDHASH:	/* case/when condition cache */
 		rb_str_cat2(str, "<ch>");
+		break;
+	      case TS_FUNCPTR:
+		{
+		    rb_insn_func_t func = (rb_insn_func_t)OPERAND_AT(iobj, j);
+#ifdef HAVE_DLADDR
+		    Dl_info info;
+		    if (dladdr(func, &info) && info.dli_sname) {
+			rb_str_cat2(str, info.dli_sname);
+			break;
+		    }
+#endif
+		    rb_str_catf(str, "<%p>", func);
+		}
 		break;
 	      default:{
 		rb_raise(rb_eSyntaxError, "unknown operand type: %c", type);
@@ -5943,6 +5967,16 @@ iseq_build_from_ary_body(rb_iseq_t *iseq, LINK_ANCHOR *anchor,
 			    iseq_add_mark_object_compile_time(iseq, map);
 			}
 			break;
+		      case TS_FUNCPTR:
+			{
+#if SIZEOF_VALUE <= SIZEOF_LONG
+			    long funcptr = NUM2LONG(op);
+#else
+			    LONG_LONG funcptr = NUM2LL(op);
+#endif
+			    argv[j] = (VALUE)funcptr;
+			}
+			break;
 		      default:
 			rb_raise(rb_eSyntaxError, "unknown operand: %c", insn_op_type((VALUE)insn_id, j));
 		    }
@@ -6199,4 +6233,96 @@ int
 rb_parse_in_main(void)
 {
     return GET_THREAD()->parse_in_eval < 0;
+}
+
+static int
+caller_location(VALUE *path, VALUE *absolute_path)
+{
+    const rb_thread_t *const th = GET_THREAD();
+    const rb_control_frame_t *const cfp =
+	rb_vm_get_ruby_level_next_cfp(th, th->cfp);
+
+    if (cfp) {
+	int line = rb_vm_get_sourceline(cfp);
+	*path = cfp->iseq->location.path;
+	*absolute_path = cfp->iseq->location.absolute_path;
+	return line;
+    }
+    else {
+	*path = rb_str_new2("<compiled>");
+	*absolute_path = *path;
+	return 1;
+    }
+}
+
+typedef struct {
+    VALUE arg;
+    rb_insn_func_t func;
+    int line;
+} accessor_args;
+
+static VALUE
+method_for_self(VALUE name, VALUE arg, rb_insn_func_t func,
+		VALUE (*build)(rb_iseq_t *, LINK_ANCHOR *, VALUE))
+{
+    VALUE path, absolute_path;
+    accessor_args acc;
+
+    acc.arg = arg;
+    acc.func = func;
+    acc.line = caller_location(&path, &absolute_path);
+    return rb_iseq_new_with_opt(NEW_IFUNC(build, (VALUE)&acc),
+				rb_sym2str(name), path, absolute_path,
+				INT2FIX(acc.line), 0, ISEQ_TYPE_METHOD, 0);
+}
+
+static VALUE
+for_self_aref(rb_iseq_t *iseq, LINK_ANCHOR *ret, VALUE a)
+{
+    const accessor_args *const args = (void *)a;
+    const int line = args->line;
+
+    iseq_set_local_table(iseq, 0);
+    iseq->param.lead_num = 0;
+    iseq->param.size = 0;
+
+    ADD_INSN1(ret, line, putobject, args->arg);
+    ADD_INSN1(ret, line, opt_call_c_function, (VALUE)args->func);
+    return Qnil;
+}
+
+static VALUE
+for_self_aset(rb_iseq_t *iseq, LINK_ANCHOR *ret, VALUE a)
+{
+    const accessor_args *const args = (void *)a;
+    const int line = args->line;
+    static const ID vars[] = {1, idUScore};
+
+    iseq_set_local_table(iseq, vars);
+    iseq->param.lead_num = 1;
+    iseq->param.size = 1;
+
+    ADD_INSN2(ret, line, getlocal, INT2FIX(numberof(vars)-0), INT2FIX(0));
+    ADD_INSN1(ret, line, putobject, args->arg);
+    ADD_INSN1(ret, line, opt_call_c_function, (VALUE)args->func);
+    ADD_INSN(ret, line, pop);
+    return Qnil;
+}
+
+/*
+ * func (index) -> (value)
+ */
+VALUE
+rb_method_for_self_aref(VALUE name, VALUE arg, rb_insn_func_t func)
+{
+    return method_for_self(name, arg, func, for_self_aref);
+}
+
+/*
+ * func (index, value) -> (index, value)
+ */
+VALUE
+rb_method_for_self_aset(VALUE name, VALUE arg, rb_insn_func_t func)
+{
+    return method_for_self(name, arg, func, for_self_aset);
 }

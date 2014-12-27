@@ -13,6 +13,10 @@
 #include "ruby/util.h"
 #include "eval_intern.h"
 
+#ifdef HAVE_DLADDR
+# include <dlfcn.h>
+#endif
+
 /* #define RUBY_MARK_FREE_DEBUG 1 */
 #include "gc.h"
 #include "vm_core.h"
@@ -182,7 +186,7 @@ static const rb_data_type_t iseq_data_type = {
 	iseq_memsize,
     },              /* functions */
     0, 0,
-    RUBY_TYPED_FREE_IMMEDIATELY | RUBY_TYPED_WB_PROTECTED
+    RUBY_TYPED_FREE_IMMEDIATELY | RUBY_TYPED_PROMOTED1 /* start from age == 2 */ | RUBY_TYPED_WB_PROTECTED
 };
 
 static VALUE
@@ -443,6 +447,7 @@ rb_iseq_new_with_opt(NODE *node, VALUE name, VALUE path, VALUE absolute_path,
     GetISeqPtr(self, iseq);
     iseq->self = self;
 
+    if (!option) option = &COMPILE_OPTION_DEFAULT;
     prepare_iseq_build(iseq, name, path, absolute_path, first_lineno, parent,
 		       type, option);
 
@@ -545,107 +550,6 @@ iseq_load(VALUE self, VALUE data, VALUE parent, VALUE opt)
     rb_iseq_build_from_ary(iseq, misc, locals, params, exception, body);
 
     cleanup_iseq_build(iseq);
-    return iseqval;
-}
-
-VALUE
-rb_method_for_self_aref(VALUE name, VALUE arg)
-{
-    VALUE iseqval = iseq_alloc(rb_cISeq);
-    rb_iseq_t *iseq;
-    VALUE path = rb_str_new2("<compiled>");
-    VALUE lineno = INT2FIX(1);
-    VALUE parent = 0;
-    VALUE misc, locals, params, exception, body, send_arg;
-    int flag = VM_CALL_FCALL | VM_CALL_ARGS_SIMPLE;
-
-    GetISeqPtr(iseqval, iseq);
-    iseq->self = iseqval;
-    iseq->local_iseq = iseq;
-
-    prepare_iseq_build(iseq, rb_sym2str(name), path, path, lineno, parent,
-		       ISEQ_TYPE_METHOD, &COMPILE_OPTION_DEFAULT);
-
-    misc = params = rb_hash_new(); /* empty */
-    locals = exception = rb_ary_new(); /* empty */
-    body = rb_ary_new();
-
-#define S(s) ID2SYM(rb_intern(#s))
-    /* def name; self[arg]; end */
-    rb_ary_push(body, lineno);
-    rb_ary_push(body, rb_ary_new3(1, S(putself)));
-    rb_ary_push(body, rb_ary_new3(2, S(putobject), arg));
-
-    /* {:mid=>:[], :flag=>264, :blockptr=>nil, :orig_argc=>1} */
-    send_arg = rb_hash_new();
-    rb_hash_aset(send_arg, S(mid), ID2SYM(idAREF));
-    rb_hash_aset(send_arg, S(flag), INT2FIX(flag));
-    rb_hash_aset(send_arg, S(blockptr), Qnil);
-    rb_hash_aset(send_arg, S(orig_argc), INT2FIX(1));
-
-    /* we do not want opt_aref for struct */
-    rb_ary_push(body, rb_ary_new3(2, S(opt_send_without_block), send_arg));
-    rb_ary_push(body, rb_ary_new3(1, S(leave)));
-#undef S
-
-    rb_iseq_build_from_ary(iseq, misc, locals, params, exception, body);
-    cleanup_iseq_build(iseq);
-
-    return iseqval;
-}
-
-VALUE
-rb_method_for_self_aset(VALUE name, VALUE arg)
-{
-    VALUE iseqval = iseq_alloc(rb_cISeq);
-    rb_iseq_t *iseq;
-    VALUE path = rb_str_new2("<compiled>");
-    VALUE lineno = INT2FIX(1);
-    VALUE parent = 0;
-    VALUE misc, locals, params, exception, body, send_arg;
-    int flag = VM_CALL_FCALL | VM_CALL_ARGS_SIMPLE;
-
-    GetISeqPtr(iseqval, iseq);
-    iseq->self = iseqval;
-    iseq->local_iseq = iseq;
-
-    prepare_iseq_build(iseq, rb_sym2str(name), path, path, lineno, parent,
-		       ISEQ_TYPE_METHOD, &COMPILE_OPTION_DEFAULT);
-
-    /* def name=(val); self[arg] = val; end */
-#define S(s) ID2SYM(rb_intern(#s))
-    misc = rb_hash_new(); /* empty */
-    locals = rb_ary_new3(1, S(val));
-    params = rb_hash_new();
-    exception = rb_ary_new(); /* empty */
-    body = rb_ary_new();
-
-    rb_hash_aset(params, S(lead_num), INT2FIX(1));
-
-    rb_ary_push(body, lineno);
-    rb_ary_push(body, rb_ary_new3(1, S(putnil)));
-    rb_ary_push(body, rb_ary_new3(1, S(putself)));
-    rb_ary_push(body, rb_ary_new3(2, S(putobject), arg));
-    rb_ary_push(body, rb_ary_new3(3, S(getlocal), INT2FIX(2), INT2FIX(0)));
-    rb_ary_push(body, rb_ary_new3(2, S(setn), INT2FIX(3)));
-
-    /* {:mid=>:[]=, :flag=>264, :blockptr=>nil, :orig_argc=>2} */
-    send_arg = rb_hash_new();
-    rb_hash_aset(send_arg, S(mid), ID2SYM(idASET));
-    rb_hash_aset(send_arg, S(flag), INT2FIX(flag));
-    rb_hash_aset(send_arg, S(blockptr), Qnil);
-    rb_hash_aset(send_arg, S(orig_argc), INT2FIX(2));
-
-    /* we do not want opt_aset for struct */
-    rb_ary_push(body, rb_ary_new3(2, S(opt_send_without_block), send_arg));
-
-    rb_ary_push(body, rb_ary_new3(1, S(pop)));
-    rb_ary_push(body, rb_ary_new3(1, S(leave)));
-#undef S
-
-    rb_iseq_build_from_ary(iseq, misc, locals, params, exception, body);
-    cleanup_iseq_build(iseq);
-
     return iseqval;
 }
 
@@ -1353,7 +1257,16 @@ rb_insn_operand_intern(const rb_iseq_t *iseq,
 	break;
 
       case TS_FUNCPTR:
-	ret = rb_str_new2("<funcptr>");
+	{
+#ifdef HAVE_DLADDR
+	    Dl_info info;
+	    if (dladdr((void *)op, &info) && info.dli_sname) {
+		ret = rb_str_new_cstr(info.dli_sname);
+		break;
+	    }
+#endif
+	    ret = rb_str_new2("<funcptr>");
+	}
 	break;
 
       default:
@@ -1948,6 +1861,16 @@ iseq_data_to_ary(rb_iseq_t *iseq)
 			rb_ary_store(val, i+1,
 				     register_label(labels_table, idx));
 		    }
+		    rb_ary_push(ary, val);
+		}
+		break;
+	      case TS_FUNCPTR:
+		{
+#if SIZEOF_VALUE <= SIZEOF_LONG
+		    VALUE val = LONG2NUM((SIGNED_VALUE)*seq);
+#else
+		    VALUE val = LL2NUM((SIGNED_VALUE)*seq);
+#endif
 		    rb_ary_push(ary, val);
 		}
 		break;

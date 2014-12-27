@@ -22,7 +22,8 @@
 #define INLINE inline
 #endif
 
-static rb_control_frame_t *vm_get_ruby_level_caller_cfp(rb_thread_t *th, rb_control_frame_t *cfp);
+static rb_control_frame_t *
+vm_get_ruby_level_caller_cfp(const rb_thread_t *th, const rb_control_frame_t *cfp);
 
 VALUE
 ruby_vm_sysstack_error_copy(void)
@@ -2107,3 +2108,16 @@ vm_once_clear(VALUE data)
     return Qnil;
 }
 
+rb_control_frame_t *
+FUNC_FASTCALL(rb_vm_opt_struct_aref)(rb_thread_t *th, rb_control_frame_t *reg_cfp)
+{
+    TOPN(0) = rb_struct_aref(GET_SELF(), TOPN(0));
+    return reg_cfp;
+}
+
+rb_control_frame_t *
+FUNC_FASTCALL(rb_vm_opt_struct_aset)(rb_thread_t *th, rb_control_frame_t *reg_cfp)
+{
+    rb_struct_aset(GET_SELF(), TOPN(0), TOPN(1));
+    return reg_cfp;
+}

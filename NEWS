@@ -57,6 +57,7 @@ with all sufficient information, see the ChangeLog file.
     * File::Stat#birthtime
 
 * GC
+  * GC.latest_gc_info returns :state to represent current GC status.
   * Improvements
     * Introduce incremental marking for major GC. [Feature #10137]
 
@@ -106,9 +107,10 @@ with all sufficient information, see the ChangeLog file.
 
 * IO
   * incompatible changes:
-    * When flushing file IO, you cannot assume that the metadata of the file
-      is updated immediately.  On some platforms (especially Windows), it is
-      delayed until the filesystem load is decreased.
+    * When flushing file IO with IO#flush, you cannot assume that the metadata
+      of the file is updated immediately.  On some platforms (especially
+      Windows), it is delayed until the filesystem load is decreased.
+      Use IO#fsync if you want to guarantee updating metadata.
 
 * Math
   * incompatible changes:
@@ -241,6 +243,10 @@ with all sufficient information, see the ChangeLog file.
 
 * Logger
   * Logger::Application is extracted to logger-application gem. It's unmaintain code.
+
+* ObjectSpace (after requiring "objspace")
+  * ObjectSpace.memsize_of(obj) returns a size includes sizeof(RVALUE).
+    [Bug #8984]
 
 * Prime
   * incompatible changes:
