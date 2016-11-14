@@ -743,6 +743,10 @@ end.join
     assert_equal(:foo, e.name)
     assert_equal([1, 2], e.args)
     assert_same(obj, e.receiver)
+  end
+
+  def test_name_error_local_variables
+    obj = BasicObject.new
     def obj.test(a, b=nil, *c, &d)
       e = a
       1.times {|f| g = foo}
