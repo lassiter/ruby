@@ -26,7 +26,6 @@ alias $PROGRAM_NAME $0
 alias $0 $progname
 
 $extlist = []
-$compiled = {}
 
 DUMMY_SIGNATURE = "***DUMMY MAKEFILE***"
 
@@ -167,7 +166,6 @@ def extmake(target, basedir = (maybestatic = 'ext'))
     $objs = []
     $srcs = []
     $extso = []
-    $compiled[target] = false
     makefile = "./Makefile"
     static = $static
     $static = nil if noinstall = File.fnmatch?("-*", target)
@@ -277,7 +275,6 @@ def extmake(target, basedir = (maybestatic = 'ext'))
     unless $configure_only or system($make, *args)
       $ignore or $continue or return false
     end
-    $compiled[target] = true
     if $clean
       FileUtils.rm_f("mkmf.log")
       if $clean != true
@@ -323,10 +320,6 @@ def extmake(target, basedir = (maybestatic = 'ext'))
     break
   end while true
   true
-end
-
-def compiled?(target)
-  $compiled[target]
 end
 
 def parse_args()
@@ -816,9 +809,12 @@ if $configure_only and $command_output
       fails.each do |d, n, err|
         d = "#{d}:#{n}:"
         if err
-          d << " " << err
+          err.scan(/.+/) do |e|
+            mf.puts %Q<\t@echo "#{d} #{e.gsub(/["`$^]/, '\\\\\\&')}">
+          end
+        else
+          mf.puts %Q<\t@echo "#{d}">
         end
-        mf.puts %Q<\t@echo "#{d}">
       end
       mf.puts %Q<\t@echo "*** Fix the problems, then remove these directories and try again if you want.">
     end

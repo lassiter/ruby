@@ -497,7 +497,7 @@ typedef struct rb_vm_struct {
     unsigned int running: 1;
     unsigned int thread_abort_on_exception: 1;
     unsigned int thread_report_on_exception: 1;
-    unsigned int trace_running: 1;
+    int trace_running;
     volatile int sleeper;
 
     /* object management */
@@ -1407,7 +1407,7 @@ VALUE rb_binding_alloc(VALUE klass);
 
 /* for debug */
 extern void rb_vmdebug_stack_dump_raw(rb_thread_t *, rb_control_frame_t *);
-extern void rb_vmdebug_debug_print_pre(rb_thread_t *th, rb_control_frame_t *cfp, VALUE *_pc);
+extern void rb_vmdebug_debug_print_pre(rb_thread_t *th, rb_control_frame_t *cfp, const VALUE *_pc);
 extern void rb_vmdebug_debug_print_post(rb_thread_t *th, rb_control_frame_t *cfp);
 
 #define SDR() rb_vmdebug_stack_dump_raw(GET_THREAD(), GET_THREAD()->cfp)
@@ -1562,7 +1562,7 @@ void rb_threadptr_unlock_all_locking_mutexes(rb_thread_t *th);
 void rb_threadptr_pending_interrupt_clear(rb_thread_t *th);
 void rb_threadptr_pending_interrupt_enque(rb_thread_t *th, VALUE v);
 int rb_threadptr_pending_interrupt_active_p(rb_thread_t *th);
-void rb_threadptr_error_print(rb_thread_t *th, VALUE errinfo);
+void rb_threadptr_error_print(rb_thread_t *volatile th, volatile VALUE errinfo);
 
 #define RUBY_VM_CHECK_INTS(th) ruby_vm_check_ints(th)
 static inline void

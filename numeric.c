@@ -97,21 +97,31 @@ round_half_up(double x, double s)
 {
     double f, xs = x * s;
 
-#ifdef HAVE_ROUND
     f = round(xs);
-#endif
+    if (s == 1.0) return f;
     if (x > 0) {
-#ifndef HAVE_ROUND
-	f = floor(xs);
-#endif
 	if ((double)((f + 0.5) / s) <= x) f += 1;
 	x = f;
     }
     else {
-#ifndef HAVE_ROUND
-	f = ceil(xs);
-#endif
 	if ((double)((f - 0.5) / s) >= x) f -= 1;
+	x = f;
+    }
+    return x;
+}
+
+static double
+round_half_down(double x, double s)
+{
+    double f, xs = x * s;
+
+    f = round(xs);
+    if (x > 0) {
+	if ((double)((f - 0.5) / s) >= x) f -= 1;
+	x = f;
+    }
+    else {
+	if ((double)((f + 0.5) / s) <= x) f += 1;
 	x = f;
     }
     return x;
@@ -188,28 +198,39 @@ rb_num_get_rounding_option(VALUE opts)
 {
     static ID round_kwds[1];
     VALUE rounding;
+    VALUE str;
     const char *s;
-    long l;
 
     if (!NIL_P(opts)) {
 	if (!round_kwds[0]) {
 	    round_kwds[0] = rb_intern_const("half");
 	}
 	if (!rb_get_kwargs(opts, round_kwds, 0, 1, &rounding)) goto noopt;
-	if (SYMBOL_P(rounding)) rounding = rb_sym2str(rounding);
-	s = StringValueCStr(rounding);
-	l = RSTRING_LEN(rounding);
-	switch (l) {
+	if (SYMBOL_P(rounding)) {
+	    str = rb_sym2str(rounding);
+	}
+	else if (NIL_P(rounding)) {
+	    goto noopt;
+	}
+	else if (!RB_TYPE_P(str = rounding, T_STRING)) {
+	    str = rb_check_string_type(rounding);
+	    if (NIL_P(str)) goto invalid;
+	}
+	s = RSTRING_PTR(str);
+	switch (RSTRING_LEN(str)) {
 	  case 2:
-	    if (strncasecmp(s, "up", 2) == 0)
+	    if (rb_memcicmp(s, "up", 2) == 0)
 		return RUBY_NUM_ROUND_HALF_UP;
 	    break;
 	  case 4:
-	    if (strncasecmp(s, "even", 4) == 0)
+	    if (rb_memcicmp(s, "even", 4) == 0)
 		return RUBY_NUM_ROUND_HALF_EVEN;
+	    if (strncasecmp(s, "down", 4) == 0)
+		return RUBY_NUM_ROUND_HALF_DOWN;
 	    break;
 	}
-	rb_raise(rb_eArgError, "unknown rounding mode: %"PRIsVALUE, rounding);
+      invalid:
+	rb_raise(rb_eArgError, "invalid rounding mode: % "PRIsVALUE, rounding);
     }
   noopt:
     return RUBY_NUM_ROUND_DEFAULT;
@@ -1031,8 +1052,8 @@ flo_coerce(VALUE x, VALUE y)
  * Returns float, negated.
  */
 
-static VALUE
-flo_uminus(VALUE flt)
+VALUE
+rb_float_uminus(VALUE flt)
 {
     return DBL2NUM(-RFLOAT_VALUE(flt));
 }
@@ -1419,7 +1440,7 @@ flo_hash(VALUE num)
 VALUE
 rb_dbl_hash(double d)
 {
-    return LONG2FIX(rb_dbl_long_hash (d));
+    return LONG2FIX(rb_dbl_long_hash(d));
 }
 
 VALUE
@@ -1487,8 +1508,8 @@ flo_cmp(VALUE x, VALUE y)
  * implementation-dependent value is returned.
  */
 
-static VALUE
-flo_gt(VALUE x, VALUE y)
+VALUE
+rb_float_gt(VALUE x, VALUE y)
 {
     double a, b;
 
@@ -1678,8 +1699,8 @@ flo_to_f(VALUE num)
  *
  */
 
-static VALUE
-flo_abs(VALUE flt)
+VALUE
+rb_float_abs(VALUE flt)
 {
     double val = fabs(RFLOAT_VALUE(flt));
     return DBL2NUM(val);
@@ -2033,6 +2054,30 @@ int_round_half_up(SIGNED_VALUE x, SIGNED_VALUE y)
     return (x + y / 2) / y * y;
 }
 
+static SIGNED_VALUE
+int_round_half_down(SIGNED_VALUE x, SIGNED_VALUE y)
+{
+    return (x + y / 2 - 1) / y * y;
+}
+
+static int
+int_half_p_half_even(VALUE num, VALUE n, VALUE f)
+{
+    return (int)int_odd_p(rb_int_idiv(n, f));
+}
+
+static int
+int_half_p_half_up(VALUE num, VALUE n, VALUE f)
+{
+    return int_pos_p(num);
+}
+
+static int
+int_half_p_half_down(VALUE num, VALUE n, VALUE f)
+{
+    return int_neg_p(num);
+}
+
 /*
  * Assumes num is an Integer, ndigits <= 0
  */
@@ -2050,9 +2095,7 @@ rb_int_round(VALUE num, int ndigits, enum ruby_num_rounding_mode mode)
 	SIGNED_VALUE x = FIX2LONG(num), y = FIX2LONG(f);
 	int neg = x < 0;
 	if (neg) x = -x;
-	x = ROUND_TO(mode,
-		     int_round_half_up(x, y),
-		     int_round_half_even(x, y));
+	x = ROUND_CALL(mode, int_round, (x, y));
 	if (neg) x = -x;
 	return LONG2NUM(x);
     }
@@ -2065,10 +2108,7 @@ rb_int_round(VALUE num, int ndigits, enum ruby_num_rounding_mode mode)
     n = rb_int_minus(num, r);
     r = rb_int_cmp(r, h);
     if (FIXNUM_POSITIVE_P(r) ||
-	(FIXNUM_ZERO_P(r) &&
-	 ROUND_TO(mode,
-		  int_pos_p(num),
-		  (SIGNED_VALUE) int_odd_p(rb_int_idiv(n, f))))) {
+	(FIXNUM_ZERO_P(r) && ROUND_CALL(mode, int_half_p, (num, n, f)))) {
 	n = rb_int_plus(n, f);
     }
     return n;
@@ -2180,6 +2220,13 @@ rb_int_truncate(VALUE num, int ndigits)
  *     34567.89.round(2)  #=> 34567.89
  *     34567.89.round(3)  #=> 34567.89
  *
+ *  If <code>half:</code> optional keyword is given, just-half number
+ *  will be rounded according to that value.
+ *  Supported values for this keyword are follows.
+ *
+ *  * <code>:up</code> or +nil+: the result will be rounded away from zero
+ *  * <code>:even</code>: the result will be rounded to nearest even number
+ *  * <code>:down</code>: the result will be rounded close to zero
  */
 
 static VALUE
@@ -2199,14 +2246,12 @@ flo_round(int argc, VALUE *argv, VALUE num)
     }
     number  = RFLOAT_VALUE(num);
     if (ndigits == 0) {
-	x = ROUND_TO(mode,
-		     round(number), round_half_even(number, 1.0));
+	x = ROUND_CALL(mode, round, (number, 1.0));
 	return dbl2ival(x);
     }
     if (float_invariant_round(number, ndigits, &num)) return num;
     f = pow(10, ndigits);
-    x = ROUND_TO(mode,
-		 round_half_up(number, f), round_half_even(number, f));
+    x = ROUND_CALL(mode, round, (number, f));
     return DBL2NUM(x / f);
 }
 
@@ -3350,7 +3395,7 @@ rb_fix2str(VALUE x, int base)
 	(val < 0 && (x & 0xFFFFFFFF00000000ull) != 0xFFFFFFFF00000000ull)) {
 	rb_bug("Unnormalized Fixnum value %p", (void *)x);
     }
-# elif
+# else
     /* should do something like above code, but currently ruby does not know */
     /* such platforms */
 # endif
@@ -3569,6 +3614,13 @@ fix_fdiv_double(VALUE x, VALUE y)
 double
 rb_int_fdiv_double(VALUE x, VALUE y)
 {
+    if (RB_INTEGER_TYPE_P(y) && !FIXNUM_ZERO_P(y)) {
+	VALUE gcd = rb_gcd(x, y);
+	if (!FIXNUM_ZERO_P(gcd)) {
+	    x = rb_int_idiv(x, gcd);
+	    y = rb_int_idiv(y, gcd);
+	}
+    }
     if (FIXNUM_P(x)) {
         return fix_fdiv_double(x, y);
     }
@@ -3583,7 +3635,7 @@ rb_int_fdiv_double(VALUE x, VALUE y)
  *  call-seq:
  *     integer.fdiv(numeric)  ->  float
  *
- *  Returns the floating point result of dividing +fix+ by +numeric+.
+ *  Returns the floating point result of dividing +integer+ by +numeric+.
  *
  *     654321.fdiv(13731)      #=> 47.6528293642124
  *     654321.fdiv(13731.24)   #=> 47.6519964693647
@@ -3852,6 +3904,8 @@ int_pow(long x, unsigned long y)
 		VALUE v;
 	      bignum:
 		v = rb_big_pow(rb_int2big(x), LONG2NUM(y));
+		if (RB_FLOAT_TYPE_P(v)) /* infinity due to overflow */
+		    return v;
 		if (z != 1) v = rb_big_mul(rb_int2big(neg ? -z : z), v);
 		return v;
 	    }
@@ -4062,8 +4116,8 @@ fix_gt(VALUE x, VALUE y)
     }
 }
 
-static VALUE
-int_gt(VALUE x, VALUE y)
+VALUE
+rb_int_gt(VALUE x, VALUE y)
 {
     if (FIXNUM_P(x)) {
 	return fix_gt(x, y);
@@ -4581,7 +4635,7 @@ rb_int_abs(VALUE num)
  *  call-seq:
  *     int.size  ->  int
  *
- *  Returns the number of bytes in the machine representation of +fix+.
+ *  Returns the number of bytes in the machine representation of +int+.
  *
  *     1.size            #=> 4
  *     -1.size           #=> 4
@@ -5258,7 +5312,7 @@ Init_Numeric(void)
 
     rb_define_method(rb_cInteger, "===", rb_int_equal, 1);
     rb_define_method(rb_cInteger, "==", rb_int_equal, 1);
-    rb_define_method(rb_cInteger, ">", int_gt, 1);
+    rb_define_method(rb_cInteger, ">", rb_int_gt, 1);
     rb_define_method(rb_cInteger, ">=", rb_int_ge, 1);
     rb_define_method(rb_cInteger, "<", int_lt, 1);
     rb_define_method(rb_cInteger, "<=", int_le, 1);
@@ -5385,7 +5439,7 @@ Init_Numeric(void)
     rb_define_method(rb_cFloat, "to_s", flo_to_s, 0);
     rb_define_alias(rb_cFloat, "inspect", "to_s");
     rb_define_method(rb_cFloat, "coerce", flo_coerce, 1);
-    rb_define_method(rb_cFloat, "-@", flo_uminus, 0);
+    rb_define_method(rb_cFloat, "-@", rb_float_uminus, 0);
     rb_define_method(rb_cFloat, "+", flo_plus, 1);
     rb_define_method(rb_cFloat, "-", flo_minus, 1);
     rb_define_method(rb_cFloat, "*", flo_mul, 1);
@@ -5399,15 +5453,15 @@ Init_Numeric(void)
     rb_define_method(rb_cFloat, "==", flo_eq, 1);
     rb_define_method(rb_cFloat, "===", flo_eq, 1);
     rb_define_method(rb_cFloat, "<=>", flo_cmp, 1);
-    rb_define_method(rb_cFloat, ">",  flo_gt, 1);
+    rb_define_method(rb_cFloat, ">",  rb_float_gt, 1);
     rb_define_method(rb_cFloat, ">=", flo_ge, 1);
     rb_define_method(rb_cFloat, "<",  flo_lt, 1);
     rb_define_method(rb_cFloat, "<=", flo_le, 1);
     rb_define_method(rb_cFloat, "eql?", flo_eql, 1);
     rb_define_method(rb_cFloat, "hash", flo_hash, 0);
     rb_define_method(rb_cFloat, "to_f", flo_to_f, 0);
-    rb_define_method(rb_cFloat, "abs", flo_abs, 0);
-    rb_define_method(rb_cFloat, "magnitude", flo_abs, 0);
+    rb_define_method(rb_cFloat, "abs", rb_float_abs, 0);
+    rb_define_method(rb_cFloat, "magnitude", rb_float_abs, 0);
     rb_define_method(rb_cFloat, "zero?", flo_zero_p, 0);
 
     rb_define_method(rb_cFloat, "to_i", flo_to_i, 0);

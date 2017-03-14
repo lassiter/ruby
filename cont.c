@@ -161,7 +161,7 @@ static VALUE rb_eFiberError;
     if (!(ptr)) rb_raise(rb_eFiberError, "uninitialized fiber"); \
 } while (0)
 
-NOINLINE(static VALUE cont_capture(volatile int *stat));
+NOINLINE(static VALUE cont_capture(volatile int *volatile stat));
 
 #define THREAD_MUST_BE_RUNNING(th) do { \
 	if (!(th)->tag) rb_raise(rb_eThreadError, "not running thread");	\
@@ -470,13 +470,9 @@ cont_new(VALUE klass)
 }
 
 static VALUE
-cont_capture(volatile int *stat)
-#if defined(__clang__) && \
-    __clang_major__ == 3 && __clang_minor__ == 8 && __clang_patch__ == 0
-__attribute__ ((optnone))
-#endif
+cont_capture(volatile int *volatile stat)
 {
-    rb_context_t *cont;
+    rb_context_t *volatile cont;
     rb_thread_t *th = GET_THREAD();
     volatile VALUE contval;
 
@@ -1106,8 +1102,9 @@ rb_cont_call(int argc, VALUE *argv, VALUE contval)
  *  the programmer and not the VM.
  *
  *  As opposed to other stackless light weight concurrency models, each fiber
- *  comes with a small 4KB stack. This enables the fiber to be paused from deeply
- *  nested function calls within the fiber block.
+ *  comes with a stack.  This enables the fiber to be paused from deeply
+ *  nested function calls within the fiber block.  See the ruby(1)
+ *  manpage to configure the size of the fiber stack(s).
  *
  *  When a fiber is created it will not run automatically. Rather it must
  *  be explicitly asked to run using the <code>Fiber#resume</code> method.

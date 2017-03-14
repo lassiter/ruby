@@ -297,6 +297,20 @@ init_copy(VALUE dest, VALUE obj)
     }
 }
 
+static inline int
+special_object_p(VALUE obj)
+{
+    if (SPECIAL_CONST_P(obj)) return TRUE;
+    switch (BUILTIN_TYPE(obj)) {
+      case T_BIGNUM:
+      case T_FLOAT:
+      case T_SYMBOL:
+	return TRUE;
+      default:
+	return FALSE;
+    }
+}
+
 /*
  *  call-seq:
  *     obj.clone(freeze: true) -> an_object
@@ -345,8 +359,10 @@ rb_obj_clone2(int argc, VALUE *argv, VALUE obj)
 	}
     }
 
-    if (rb_special_const_p(obj)) {
-        rb_raise(rb_eTypeError, "can't clone %s", rb_obj_classname(obj));
+    if (special_object_p(obj)) {
+	if (kwfreeze == Qfalse)
+	    rb_raise(rb_eArgError, "can't unfreeze %s", rb_obj_classname(obj));
+	return obj;
     }
     clone = rb_obj_alloc(rb_obj_class(obj));
     RBASIC(clone)->flags &= (FL_TAINT|FL_PROMOTED0|FL_PROMOTED1);
@@ -422,8 +438,8 @@ rb_obj_dup(VALUE obj)
 {
     VALUE dup;
 
-    if (rb_special_const_p(obj)) {
-        rb_raise(rb_eTypeError, "can't dup %s", rb_obj_classname(obj));
+    if (special_object_p(obj)) {
+	return obj;
     }
     dup = rb_obj_alloc(rb_obj_class(obj));
     init_copy(dup, obj);

@@ -59,6 +59,7 @@ branches:
     - ruby_2_1
     - ruby_2_2
     - ruby_2_3
+    - ruby_2_4
     - /^feature\//
     - /^bug\//
 
@@ -72,13 +73,6 @@ notifications:
     on_failure: always # [always|never|change] # default: always
     template:
       - "%{message} by @%{author}: See %{build_url}"
-
-  # Update ruby-head installed on Travis CI so other projects can test against it.
-  webhooks:
-    urls:
-      - "https://rubies.travis-ci.org/rebuild/ruby-head"
-    on_success: always
-    on_failure: never
 
   email:
     - ko1c-failure@atdot.net

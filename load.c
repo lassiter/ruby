@@ -230,10 +230,10 @@ features_index_add(VALUE feature, VALUE offset)
     feature_end = feature_str + RSTRING_LEN(feature);
 
     for (ext = feature_end; ext > feature_str; ext--)
-      if (*ext == '.' || *ext == '/')
-	break;
+	if (*ext == '.' || *ext == '/')
+	    break;
     if (*ext != '.')
-      ext = NULL;
+	ext = NULL;
     /* Now `ext` points to the only string matching %r{^\.[^./]*$} that is
        at the end of `feature`, or is NULL if there is no such string. */
 
@@ -745,9 +745,6 @@ load_lock(const char *ftptr)
     }
     switch (rb_thread_shield_wait((VALUE)data)) {
       case Qfalse:
-	data = (st_data_t)ftptr;
-	st_insert(loading_tbl, data, (st_data_t)rb_thread_shield_new());
-	return 0;
       case Qnil:
 	return 0;
     }
@@ -759,7 +756,12 @@ release_thread_shield(st_data_t *key, st_data_t *value, st_data_t done, int exis
 {
     VALUE thread_shield = (VALUE)*value;
     if (!existing) return ST_STOP;
-    if (done ? rb_thread_shield_destroy(thread_shield) : rb_thread_shield_release(thread_shield)) {
+    if (done) {
+	rb_thread_shield_destroy(thread_shield);
+	/* Delete the entry even if there are waiting threads, because they
+	 * won't load the file and won't delete the entry. */
+    }
+    else if (rb_thread_shield_release(thread_shield)) {
 	/* still in-use */
 	return ST_CONTINUE;
     }

@@ -1474,6 +1474,25 @@ class TestRefinement < Test::Unit::TestCase
     INPUT
   end
 
+  def test_undef_prepended_method
+    bug13096 = '[ruby-core:78944] [Bug #13096]'
+    klass = EnvUtil.labeled_class("X") do
+      def foo; end
+    end
+    klass.prepend(Module.new)
+    ext = EnvUtil.labeled_module("Ext") do
+      refine klass do
+        def foo
+        end
+      end
+    end
+    assert_nothing_raised(NameError, bug13096) do
+      klass.class_eval do
+        undef :foo
+      end
+    end
+  end
+
   def test_call_refined_method_in_duplicate_module
     bug10885 = '[ruby-dev:48878]'
     assert_in_out_err([], <<-INPUT, [], [], bug10885)
@@ -1787,6 +1806,59 @@ class TestRefinement < Test::Unit::TestCase
       end
       assert_kind_of(Time, Time.now, bug)
     end;
+  end
+
+  def test_public_in_refine
+    assert_separately([], "#{<<-"begin;"}\n#{<<-"end;"}")
+    begin;
+      bug12729 = '[ruby-core:77161] [Bug #12729]'
+
+      class Cow
+        private
+        def moo() "Moo"; end
+      end
+
+      module PublicCows
+        refine(Cow) {
+          public :moo
+        }
+      end
+
+      using PublicCows
+      assert_equal("Moo", Cow.new.moo, bug12729)
+    end;
+  end
+
+  module SuperToModule
+    class Parent
+    end
+
+    class Child < Parent
+    end
+
+    module FooBar
+      refine Parent do
+        def to_s
+          "Parent"
+        end
+      end
+
+      refine Child do
+        def to_s
+          super + " -> Child"
+        end
+      end
+    end
+
+    using FooBar
+    def Child.test
+      new.to_s
+    end
+  end
+
+  def test_super_to_module
+    bug = '[ruby-core:79588] [Bug #13227]'
+    assert_equal("Parent -> Child", SuperToModule::Child.test, bug)
   end
 
   private

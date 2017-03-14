@@ -392,6 +392,8 @@ static int parser_yyerror(struct parser_params*, const char*);
 #define NODE_CALL_Q(q) (CALL_Q_P(q) ? NODE_QCALL : NODE_CALL)
 #define NEW_QCALL(q,r,m,a) NEW_NODE(NODE_CALL_Q(q),r,m,a)
 
+#define lambda_beginning_p() (lpar_beg && lpar_beg == paren_nest)
+
 static int yylex(YYSTYPE*, struct parser_params*);
 
 #ifndef RIPPER
@@ -774,7 +776,8 @@ static VALUE parser_heredoc_dedent(struct parser_params*,VALUE);
 # define rb_warning3L(l,fmt,a,b,c)   WARNING_CALL(WARNING_ARGS_L(l, fmt, 4), (a), (b), (c))
 # define rb_warning4L(l,fmt,a,b,c,d) WARNING_CALL(WARNING_ARGS_L(l, fmt, 5), (a), (b), (c), (d))
 #ifdef RIPPER
-static ID id_warn, id_warning;
+static ID id_warn, id_warning, id_gets;
+# define WARN_S_L(s,l) STR_NEW(s,l)
 # define WARN_S(s) STR_NEW2(s)
 # define WARN_I(i) INT2NUM(i)
 # define PRIsWARN "s"
@@ -788,6 +791,7 @@ static void ripper_compile_error(struct parser_params*, const char *fmt, ...);
 # define compile_error ripper_compile_error
 # define PARSER_ARG parser,
 #else
+# define WARN_S_L(s,l) s
 # define WARN_S(s) s
 # define WARN_I(i) i
 # define PRIsWARN PRIsVALUE
@@ -3758,7 +3762,7 @@ brace_body	: {$<vars>$ = dyna_push();}
 		;
 
 do_body 	: {$<vars>$ = dyna_push();}
-		  {$<val>$ = cmdarg_stack >> 1; CMDARG_SET(0);}
+		  {$<val>$ = cmdarg_stack; CMDARG_SET(0);}
 		  opt_block_param compstmt
 		    {
 			$$ = new_do_body($3, $4);
@@ -5251,19 +5255,21 @@ parser_yyerror(struct parser_params *parser, const char *msg)
     const char *p, *pe;
     const char *pre = "", *post = "";
     const char *code = "", *caret = "", *newline = "";
+    const char *lim;
     char *buf;
     long len;
     int i;
 
     p = lex_p;
-    while (lex_pbeg <= p) {
-	if (*p == '\n') break;
+    lim = p - lex_pbeg > max_line_margin ? p - max_line_margin : lex_pbeg;
+    while (lim < p) {
+	if (*(p-1) == '\n') break;
 	p--;
     }
-    p++;
 
     pe = lex_p;
-    while (pe < lex_pend) {
+    lim = lex_pend - pe > max_line_margin ? pe + max_line_margin : lex_pend;
+    while (pe < lim) {
 	if (*pe == '\n') break;
 	pe++;
     }
@@ -5753,10 +5759,42 @@ parser_tok_hex(struct parser_params *parser, size_t *numlen)
 
 #define tokcopy(n) memcpy(tokspace(n), lex_p - (n), (n))
 
+static int
+parser_tokadd_codepoint(struct parser_params *parser, rb_encoding **encp,
+			int regexp_literal, int wide)
+{
+    size_t numlen;
+    int codepoint = scan_hex(lex_p, wide ? 6 : 4, &numlen);
+    if (wide ? (numlen == 0) : (numlen < 4))  {
+	yyerror("invalid Unicode escape");
+	return FALSE;
+    }
+    if (codepoint > 0x10ffff) {
+	yyerror("invalid Unicode codepoint (too large)");
+	return FALSE;
+    }
+    if ((codepoint & 0xfffff800) == 0xd800) {
+	yyerror("invalid Unicode codepoint");
+	return FALSE;
+    }
+    lex_p += numlen;
+    if (regexp_literal) {
+	tokcopy((int)numlen);
+    }
+    else if (codepoint >= 0x80) {
+	*encp = rb_utf8_encoding();
+	tokaddmbc(codepoint, *encp);
+    }
+    else {
+	tokadd(codepoint);
+    }
+    return TRUE;
+}
+
 /* return value is for ?\u3042 */
 static int
 parser_tokadd_utf8(struct parser_params *parser, rb_encoding **encp,
-                   int string_literal, int symbol_literal, int regexp_literal)
+		   int string_literal, int symbol_literal, int regexp_literal)
 {
     /*
      * If string_literal is true, then we allow multiple codepoints
@@ -5765,65 +5803,39 @@ parser_tokadd_utf8(struct parser_params *parser, rb_encoding **encp,
      * codepoint without adding it
      */
 
-    int codepoint;
-    size_t numlen;
+    const int open_brace = '{', close_brace = '}';
 
     if (regexp_literal) { tokadd('\\'); tokadd('u'); }
 
-    if (peek('{')) {  /* handle \u{...} form */
-	do {
-            if (regexp_literal) { tokadd(*lex_p); }
-	    nextc();
-	    codepoint = scan_hex(lex_p, 6, &numlen);
-	    if (numlen == 0)  {
-		yyerror("invalid Unicode escape");
+    if (peek(open_brace)) {  /* handle \u{...} form */
+	int c, last = nextc();
+	do c = nextc(); while (ISSPACE(c));
+	pushback(c);
+	while (!string_literal || c != close_brace) {
+	    if (regexp_literal) tokadd(last);
+	    if (!parser_tokadd_codepoint(parser, encp, regexp_literal, TRUE)) {
 		return 0;
 	    }
-	    if (codepoint > 0x10ffff) {
-		yyerror("invalid Unicode codepoint (too large)");
-		return 0;
-	    }
-	    lex_p += numlen;
-            if (regexp_literal) {
-                tokcopy((int)numlen);
-            }
-            else if (codepoint >= 0x80) {
-		*encp = rb_utf8_encoding();
-		if (string_literal) tokaddmbc(codepoint, *encp);
-	    }
-	    else if (string_literal) {
-		tokadd(codepoint);
-	    }
-	} while (string_literal && (peek(' ') || peek('\t')));
+	    while (ISSPACE(c = nextc())) last = c;
+	    pushback(c);
+	    if (!string_literal) break;
+	}
 
-	if (!peek('}')) {
+	if (c != close_brace) {
 	    yyerror("unterminated Unicode escape");
 	    return 0;
 	}
 
-        if (regexp_literal) { tokadd('}'); }
+	if (regexp_literal) tokadd(close_brace);
 	nextc();
     }
     else {			/* handle \uxxxx form */
-	codepoint = scan_hex(lex_p, 4, &numlen);
-	if (numlen < 4) {
-	    yyerror("invalid Unicode escape");
+	if (!parser_tokadd_codepoint(parser, encp, regexp_literal, FALSE)) {
 	    return 0;
-	}
-	lex_p += 4;
-        if (regexp_literal) {
-            tokcopy(4);
-        }
-	else if (codepoint >= 0x80) {
-	    *encp = rb_utf8_encoding();
-	    if (string_literal) tokaddmbc(codepoint, *encp);
-	}
-	else if (string_literal) {
-	    tokadd(codepoint);
 	}
     }
 
-    return codepoint;
+    return TRUE;
 }
 
 #define ESCAPE_CONTROL 1
@@ -6169,7 +6181,7 @@ parser_tokadd_string(struct parser_params *parser,
 		}
 		parser_tokadd_utf8(parser, &enc, 1,
 				   func & STR_FUNC_SYMBOL,
-                                   func & STR_FUNC_REGEXP);
+				   func & STR_FUNC_REGEXP);
 		if (has_nonascii && enc != *encp) {
 		    mixed_escape(beg, enc, *encp);
 		}
@@ -6394,6 +6406,8 @@ parser_heredoc_identifier(struct parser_params *parser)
     int c = nextc(), term, func = 0;
     int token = tSTRING_BEG;
     long len;
+    int newline = 0;
+    int indent = 0;
 
     if (c == '-') {
 	c = nextc();
@@ -6402,8 +6416,7 @@ parser_heredoc_identifier(struct parser_params *parser)
     else if (c == '~') {
 	c = nextc();
 	func = STR_FUNC_INDENT;
-	heredoc_indent = INT_MAX;
-	heredoc_line_indent = 0;
+	indent = INT_MAX;
     }
     switch (c) {
       case '\'':
@@ -6420,10 +6433,21 @@ parser_heredoc_identifier(struct parser_params *parser)
 	term = c;
 	while ((c = nextc()) != -1 && c != term) {
 	    if (tokadd_mbchar(c) == -1) return 0;
+	    if (!newline && c == '\n') newline = 1;
+	    else if (newline) newline = 2;
 	}
 	if (c == -1) {
 	    compile_error(PARSER_ARG "unterminated here document identifier");
 	    return 0;
+	}
+	switch (newline) {
+	  case 1:
+	    rb_warn0("here document identifier ends with a newline");
+	    if (--tokidx > 0 && tokenbuf[tokidx] == '\r') --tokidx;
+	    break;
+	  case 2:
+	    compile_error(PARSER_ARG "here document identifier across newlines, never match");
+	    return -1;
 	}
 	break;
 
@@ -6431,7 +6455,7 @@ parser_heredoc_identifier(struct parser_params *parser)
 	if (!parser_is_identchar()) {
 	    pushback(c);
 	    if (func & STR_FUNC_INDENT) {
-		pushback(heredoc_indent > 0 ? '~' : '-');
+		pushback(indent > 0 ? '~' : '-');
 	    }
 	    return 0;
 	}
@@ -6454,6 +6478,8 @@ parser_heredoc_identifier(struct parser_params *parser)
 				  lex_lastline);		/* nd_orig */
     nd_set_line(lex_strterm, ruby_sourceline);
     ripper_flush(parser);
+    heredoc_indent = indent;
+    heredoc_line_indent = 0;
     return token;
 }
 
@@ -7468,7 +7494,7 @@ parse_numeric(struct parser_params *parser, int c)
 }
 
 static int
-parse_qmark(struct parser_params *parser)
+parse_qmark(struct parser_params *parser, int space_seen)
 {
     rb_encoding *enc;
     register int c;
@@ -7521,18 +7547,23 @@ parse_qmark(struct parser_params *parser)
     }
     else if ((rb_enc_isalnum(c, current_enc) || c == '_') &&
 	     lex_p < lex_pend && is_identchar(lex_p, lex_pend, current_enc)) {
+	if (space_seen) {
+	    const char *start = lex_p - 1, *p = start;
+	    do {
+		int n = rb_enc_precise_mbclen(p, lex_pend, current_enc);
+		p += n;
+	    } while (p < lex_pend && is_identchar(p, lex_pend, current_enc));
+	    rb_warn2("`?' just followed by `%.*s' is interpreted as" \
+		     " a conditional operator, put a space after `?'",
+		     WARN_I((int)(p - start)), WARN_S_L(start, (p - start)));
+	}
 	goto ternary;
     }
     else if (c == '\\') {
 	if (peek('u')) {
 	    nextc();
-	    c = parser_tokadd_utf8(parser, &enc, 0, 0, 0);
-	    if (0x80 <= c) {
-		tokaddmbc(c, enc);
-	    }
-	    else {
-		tokadd(c);
-	    }
+	    if (!parser_tokadd_utf8(parser, &enc, 0, 0, 0))
+		return 0;
 	}
 	else if (!lex_eol_p() && !(c = *lex_p, ISASCII(c))) {
 	    nextc();
@@ -7902,7 +7933,7 @@ parse_ident(struct parser_params *parser, int c, int cmd_state)
 		command_start = TRUE;
 	    }
 	    if (kw->id[0] == keyword_do) {
-		if (lpar_beg && lpar_beg == paren_nest) {
+		if (lambda_beginning_p()) {
 		    lpar_beg = 0;
 		    --paren_nest;
 		    return keyword_do_LAMBDA;
@@ -8267,7 +8298,7 @@ parser_yylex(struct parser_params *parser)
 	return tSTRING_BEG;
 
       case '?':
-	return parse_qmark(parser);
+	return parse_qmark(parser, space_seen);
 
       case '&':
 	if ((c = nextc()) == '&') {
@@ -8508,6 +8539,10 @@ parser_yylex(struct parser_params *parser)
 	else if (IS_SPCARG(-1)) {
 	    c = tLPAREN_ARG;
 	}
+	else if (IS_lex_state(EXPR_ENDFN) && space_seen && !lambda_beginning_p()) {
+	    rb_warning0("parentheses after method name is interpreted as "
+			"an argument list, not a decomposed argument");
+	}
 	paren_nest++;
 	COND_PUSH(0);
 	CMDARG_PUSH(0);
@@ -8542,7 +8577,7 @@ parser_yylex(struct parser_params *parser)
 
       case '{':
 	++brace_nest;
-	if (lpar_beg && lpar_beg == paren_nest) {
+	if (lambda_beginning_p()) {
 	    SET_LEX_STATE(EXPR_BEG);
 	    lpar_beg = 0;
 	    --paren_nest;
@@ -10586,7 +10621,7 @@ reg_named_capture_assign_iter(const OnigUChar *name, const OnigUChar *name_end,
         return ST_CONTINUE;
     }
     var = intern_cstr(s, len, enc);
-    node = newline_node(node_assign(assignable(var, 0), NEW_LIT(ID2SYM(var))));
+    node = node_assign(assignable(var, 0), NEW_LIT(ID2SYM(var)));
     succ = arg->succ_block;
     if (!succ) succ = NEW_BEGIN(0);
     succ = block_append(succ, node);
@@ -11300,6 +11335,18 @@ ripper_compile_error(struct parser_params *parser, const char *fmt, ...)
 static VALUE
 ripper_lex_get_generic(struct parser_params *parser, VALUE src)
 {
+    VALUE line = rb_funcallv_public(src, id_gets, 0, 0);
+    if (!NIL_P(line) && !RB_TYPE_P(line, T_STRING)) {
+	rb_raise(rb_eTypeError,
+		 "gets returned %"PRIsVALUE" (expected String or nil)",
+		 rb_obj_class(line));
+    }
+    return line;
+}
+
+static VALUE
+ripper_lex_io_get(struct parser_params *parser, VALUE src)
+{
     return rb_io_gets(src);
 }
 
@@ -11334,6 +11381,9 @@ ripper_initialize(int argc, VALUE *argv, VALUE self)
     TypedData_Get_Struct(self, struct parser_params, &parser_data_type, parser);
     rb_scan_args(argc, argv, "12", &src, &fname, &lineno);
     if (RB_TYPE_P(src, T_FILE)) {
+        lex_gets = ripper_lex_io_get;
+    }
+    else if (rb_respond_to(src, id_gets)) {
         lex_gets = ripper_lex_get_generic;
     }
     else {
@@ -11501,6 +11551,7 @@ Init_ripper(void)
     ripper_init_eventids2();
     id_warn = rb_intern_const("warn");
     id_warning = rb_intern_const("warning");
+    id_gets = rb_intern_const("gets");
 
     InitVM(ripper);
 }

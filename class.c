@@ -1841,6 +1841,9 @@ rb_extract_keywords(VALUE *orighash)
     }
     st_foreach(rb_hash_tbl_raw(hash), separate_symbol, (st_data_t)&parthash);
     *orighash = parthash[1];
+    if (parthash[1] && RBASIC_CLASS(hash) != rb_cHash) {
+	RBASIC_SET_CLASS(parthash[1], RBASIC_CLASS(hash));
+    }
     return parthash[0];
 }
 
@@ -1896,7 +1899,7 @@ rb_get_kwargs(VALUE keyword_hash, const ID *table, int required, int optional, V
 	}
     }
     if (!rest && keyword_hash) {
-	if (RHASH_SIZE(keyword_hash) > (unsigned int)j) {
+	if (RHASH_SIZE(keyword_hash) > (unsigned int)(values ? 0 : j)) {
 	    unknown_keyword_error(keyword_hash, table, required+optional);
 	}
     }

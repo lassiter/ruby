@@ -1021,9 +1021,9 @@ invoke_iseq_block_from_c(rb_thread_t *th, const struct rb_captured_block *captur
 static inline VALUE
 invoke_block_from_c_splattable(rb_thread_t *th, VALUE block_handler,
 			       int argc, const VALUE *argv,
-			       VALUE passed_block_handler, const rb_cref_t *cref)
+			       VALUE passed_block_handler, const rb_cref_t *cref,
+			       int is_lambda)
 {
-    int is_lambda = FALSE;
   again:
     switch (vm_block_handler_type(block_handler)) {
       case block_handler_type_iseq:
@@ -1058,21 +1058,21 @@ check_block_handler(rb_thread_t *th)
 }
 
 static VALUE
-vm_yield_with_cref(rb_thread_t *th, int argc, const VALUE *argv, const rb_cref_t *cref)
+vm_yield_with_cref(rb_thread_t *th, int argc, const VALUE *argv, const rb_cref_t *cref, int is_lambda)
 {
-    return invoke_block_from_c_splattable(th, check_block_handler(th), argc, argv, VM_BLOCK_HANDLER_NONE, cref);
+    return invoke_block_from_c_splattable(th, check_block_handler(th), argc, argv, VM_BLOCK_HANDLER_NONE, cref, is_lambda);
 }
 
 static VALUE
 vm_yield(rb_thread_t *th, int argc, const VALUE *argv)
 {
-    return invoke_block_from_c_splattable(th, check_block_handler(th), argc, argv, VM_BLOCK_HANDLER_NONE, NULL);
+    return invoke_block_from_c_splattable(th, check_block_handler(th), argc, argv, VM_BLOCK_HANDLER_NONE, NULL, FALSE);
 }
 
 static VALUE
 vm_yield_with_block(rb_thread_t *th, int argc, const VALUE *argv, VALUE block_handler)
 {
-    return invoke_block_from_c_splattable(th, check_block_handler(th), argc, argv, block_handler, NULL);
+    return invoke_block_from_c_splattable(th, check_block_handler(th), argc, argv, block_handler, NULL, FALSE);
 }
 
 static inline VALUE
@@ -1982,9 +1982,9 @@ rb_thread_method_id_and_class(rb_thread_t *th, ID *idp, ID *called_idp, VALUE *k
 }
 
 int
-rb_frame_method_id_and_class(ID *idp, ID *called_idp, VALUE *klassp)
+rb_frame_method_id_and_class(ID *idp, VALUE *klassp)
 {
-    return rb_thread_method_id_and_class(GET_THREAD(), idp, called_idp, klassp);
+    return rb_thread_method_id_and_class(GET_THREAD(), idp, 0, klassp);
 }
 
 VALUE
@@ -2600,6 +2600,7 @@ core_hash_merge(VALUE hash, long argc, const VALUE *argv)
 {
     long i;
 
+    Check_Type(hash, T_HASH);
     VM_ASSERT(argc % 2 == 0);
     for (i=0; i<argc; i+=2) {
 	rb_hash_aset(hash, argv[i], argv[i+1]);
@@ -2620,20 +2621,23 @@ core_hash_from_ary(VALUE ary)
 {
     VALUE hash = rb_hash_new();
 
-    RUBY_DTRACE_CREATE_HOOK(HASH, RARRAY_LEN(ary));
+    RUBY_DTRACE_CREATE_HOOK(HASH, (Check_Type(ary, T_ARRAY), RARRAY_LEN(ary)));
     return core_hash_merge_ary(hash, ary);
 }
 
+#if 0
 static VALUE
 m_core_hash_merge_ary(VALUE self, VALUE hash, VALUE ary)
 {
     REWIND_CFP(core_hash_merge_ary(hash, ary));
     return hash;
 }
+#endif
 
 static VALUE
 core_hash_merge_ary(VALUE hash, VALUE ary)
 {
+    Check_Type(ary, T_ARRAY);
     core_hash_merge(hash, RARRAY_LEN(ary), RARRAY_CONST_PTR(ary));
     return hash;
 }
@@ -2755,7 +2759,9 @@ Init_VM(void)
     rb_define_method_id(klass, id_core_define_singleton_method, m_core_define_singleton_method, 3);
     rb_define_method_id(klass, id_core_set_postexe, m_core_set_postexe, 0);
     rb_define_method_id(klass, id_core_hash_from_ary, m_core_hash_from_ary, 1);
+#if 0
     rb_define_method_id(klass, id_core_hash_merge_ary, m_core_hash_merge_ary, 2);
+#endif
     rb_define_method_id(klass, id_core_hash_merge_ptr, m_core_hash_merge_ptr, -1);
     rb_define_method_id(klass, id_core_hash_merge_kwd, m_core_hash_merge_kwd, -1);
     rb_define_method_id(klass, idProc, rb_block_proc, 0);

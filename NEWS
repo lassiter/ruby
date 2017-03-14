@@ -25,21 +25,26 @@ with all sufficient information, see the ChangeLog file or Redmine
 * Rescue modifier now applicable to method arguments.
   [Feature #12686]
 
+* Toplevel return is now allowed.  [Feature #4840]
+
 === Core classes updates (outstanding ones only)
 
 * Array
+
+  * Array#concat [Feature #12333]
+    Now takes multiple arguments.
 
   * Array#max and Array#min.  [Feature #12172]
     This may cause a tiny incompatibility: if you redefine
     Enumerable#max and call max to an Array, your redefinition will be
     now ignored.  You should also redefine Array#max.
 
+  * Array#pack [Feature #12754]
+    Now takes optional argument `buffer:' to reuse already allocated buffer.
+
   * Array#sum  [Feature #12217]
     This is different from Enumerable#sum in that Array#sum doesn't depend on
     the definition of each method.
-
-  * Array#concat [Feature #12333]
-    Now takes multiple arguments.
 
 * Comparable
 
@@ -51,10 +56,10 @@ with all sufficient information, see the ChangeLog file or Redmine
 
 * Enumerable
 
-  * Enumerable#sum  [Feature #12217]
-  * Enumerable#uniq  [Feature #11090]
   * Enumerable#chunk called without a block now return an Enumerator
     [Feature #2172]
+  * Enumerable#sum  [Feature #12217]
+  * Enumerable#uniq  [Feature #11090]
 
 * Enumerator::Lazy
 
@@ -71,24 +76,26 @@ with all sufficient information, see the ChangeLog file or Redmine
     digits, as well as Float#round.  [Feature #12245]
 
   * Float#round now takes an optional keyword argument, half option, and
-    the default behavior is round-to-nearest-even now.  [Bug #12548]
+    the default behavior is round-up.  [Bug #12548] [Bug #12958]
+    half option can be one of :even, :up, and :down.  [Feature #12953]
 
 * Hash
 
-  * Hash#transform_values and Hash#transform_values!  [Feature #12512]
   * Hash#compact and Hash#compact!  [Feature #11818]
+  * Hash#transform_values and Hash#transform_values!  [Feature #12512]
 
 * Integer
+
+  * Fixnum and Bignum are unified into Integer  [Feature #12005]
 
   * Integer#ceil, Integer#floor, and Integer#truncate now take an optional
     digits, as well as Integer#round.  [Feature #12245]
 
-  * Fixnum and Bignum are unified into Integer  [Feature #12005]
-
   * Integer#digits for extracting columns of place-value notation [Feature #12447]
 
-  * Int#round now takes an optional keyword argument, half option, and the
-    default behavior is round-to-nearest-even now.  [Bug #12548]
+  * Integer#round now takes an optional keyword argument, half option, and the
+    default behavior is round-up now.  [Bug #12548] [Bug #12958]
+    half option can be one of :even, :up, and :down.  [Feature #12953]
 
 * IO
 
@@ -107,8 +114,8 @@ with all sufficient information, see the ChangeLog file or Redmine
 
 * Module
 
-  * Module.used_modules [Feature #7418]
   * Module#refine accepts a module as the argument now. [Feature #12534]
+  * Module.used_modules [Feature #7418]
 
 * Numeric
 
@@ -122,12 +129,19 @@ with all sufficient information, see the ChangeLog file or Redmine
 * Rational
 
   * Rational#round now takes an optional keyword argument, half option, and
-    the default behavior is round-to-nearest-even now.  [Bug #12548]
+    the default behavior is round-up now.  [Bug #12548] [Bug #12958]
+    half option can be one of :even, :up, and :down.  [Feature #12953]
 
 * Regexp
 
+  * meta character \X matches Unicode 9.0 characters with some workarounds
+    for UTR #51 Unicode Emoji, Version 4.0 emoji zwj sequences.
+
   * Regexp#match? [Feature #8110]
     This returns bool and doesn't save backref.
+
+  * Update Onigmo 6.1.1.
+    * Support absent operator https://github.com/k-takata/Onigmo/issues/82
 
 * Regexp/String: Updated Unicode version from 8.0.0 to 9.0.0 [Feature #12513]
 
@@ -137,6 +151,18 @@ with all sufficient information, see the ChangeLog file or Redmine
 
 * String
 
+  * String#casecmp? [Feature #12786]
+
+  * String#concat, String#prepend [Feature #12333]
+    Now takes multiple arguments.
+
+  * String#each_line, String#lines now takes an optional keyword argument,
+    chomp flag.  [Feature #12553]
+
+  * String#match? [Feature #12898]
+
+  * String#unpack1 [Feature #12752]
+
   * String#upcase, String#downcase, String#capitalize, String#swapcase and
     their bang variants work for all of Unicode, and are no longer limited
     to ASCII. Supported encodings are UTF-8, UTF-16BE/LE, UTF-32BE/LE, and
@@ -145,12 +171,18 @@ with all sufficient information, see the ChangeLog file or Redmine
 
   * String.new(capacity: size) [Feature #12024]
 
-  * String#concat, String#prepend [Feature #12333]
-    Now takes multiple arguments.
+* StringIO
+
+  * StringIO#gets, StringIO#readline, StringIO#each_line, StringIO#readlines now takes
+    an optional keyword argument, chomp flag.  [Feature #12553]
 
 * Symbol
 
+  * Symbol#casecmp? [Feature #12786]
+
   * Symbol#match now returns MatchData.  [Bug #11991]
+
+  * Symbol#match? [Feature #12898]
 
   * Symbol#upcase, Symbol#downcase, Symbol#capitalize, and Symbol#swapcase now
     work for all of Unicode. See the documentation of String#downcase
@@ -193,19 +225,27 @@ with all sufficient information, see the ChangeLog file or Redmine
 
 * Logger
 
-	* Allow specifying logger parameters in constructor such
-	  as level, progname, datetime_format, formatter. [Feature #12224]
-	* Add shift_period_suffix option. [Feature #10772]
+  * Allow specifying logger parameters in constructor such
+    as level, progname, datetime_format, formatter. [Feature #12224]
+  * Add shift_period_suffix option. [Feature #10772]
 
 * Net::HTTP
 
   * New method: Net::HTTP.post [Feature #12375]
 
+* Net::FTP
+
+  * Support TLS (RFC 4217).
+  * Support hash style options for Net::FTP.new.
+  * Add a new optional argument pathname to Net::FTP#status.
+    Contributed by soleboxy. [GH-1478] [Feature #12965]
+
 * OpenSSL
 
-  * OpenSSL is extracted as a gem and the upstream has been migrated to
-    https://github.com/ruby/openssl. OpenSSL still remains as a default gem.
-    Refer to its History.md for the full release note. [Feature #9612]
+  * Includes Ruby/OpenSSL 2.0. OpenSSL has been extracted as a Gem and is
+    maintained at a separate repository now: https://github.com/ruby/openssl.
+    It still remains as a 'default gem'.  [Feature #9612]
+    Refer to ext/openssl/History.md for the full release note.
 
 * optparse
 
@@ -219,6 +259,12 @@ with all sufficient information, see the ChangeLog file or Redmine
 
   * Readline.quoting_detection_proc and Readline.quoting_detection_proc=
     [Feature #12659]
+
+* REXML
+
+  * REXML::Element#[]: If String or Symbol is specified, attribute
+    value is returned. Otherwise, Nth child is returned. This is
+    backward compatible change.
 
 * set
 
@@ -250,7 +296,7 @@ with all sufficient information, see the ChangeLog file or Redmine
   FIXNUM_P(obj) and RB_TYPE_P(obj, T_BIGNUM).
   RUBY_INTEGER_UNIFICATION can be used to detect this feature at C-level.
   0.class == Integer can be used to detect this feature at Ruby-level.
-  The C-level constants, rb_cFixnum and rb_cBignum, is removed.
+  The C-level constants, rb_cFixnum and rb_cBignum, are removed.
   They can cause compilation failure.
 
 * String/Symbol#upcase/downcase/swapcase/capitalize(!) now work for all of
@@ -270,6 +316,10 @@ with all sufficient information, see the ChangeLog file or Redmine
 * DateTime
 
   * DateTime#to_time now preserves timezone.  [Bug #12189]
+
+* PSych
+
+  * Update Psych 2.2.2
 
 * RDoc
 
@@ -303,8 +353,12 @@ with all sufficient information, see the ChangeLog file or Redmine
 
 * XMLRPC
 
-  * XMLRPC is removed from stdlib. [Feature #12160][ruby-core:74239]
+  * XMLRPC is removed from stdlib, and bundled as gem. [Feature #12160][ruby-core:74239]
     https://github.com/ruby/xmlrpc is the new upstream.
+
+* Zlib
+
+  * Zlib.gzip and Zlib.gunzip [Feature #13020]
 
 === C API updates
 
@@ -331,6 +385,8 @@ with all sufficient information, see the ChangeLog file or Redmine
 * Thread deadlock detection now shows their backtrace and dependency. [Feature #8214]
 
 * st_table (st.c) internal data structure is improved. [Feature #12142]
+
+* Rational is extensively optimized. [Feature #12484]
 
 === Miscellaneous changes
 

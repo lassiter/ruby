@@ -133,20 +133,20 @@ extern "C" {
 # endif
 #endif
 
-static inline int
+static inline unsigned int
 nlz_int(unsigned int x)
 {
 #if defined(HAVE_BUILTIN___BUILTIN_CLZ)
     if (x == 0) return SIZEOF_INT * CHAR_BIT;
-    return __builtin_clz(x);
+    return (unsigned int)__builtin_clz(x);
 #else
     unsigned int y;
 # if 64 < SIZEOF_INT * CHAR_BIT
-    int n = 128;
+    unsigned int n = 128;
 # elif 32 < SIZEOF_INT * CHAR_BIT
-    int n = 64;
+    unsigned int n = 64;
 # else
-    int n = 32;
+    unsigned int n = 32;
 # endif
 # if 64 < SIZEOF_INT * CHAR_BIT
     y = x >> 64; if (y) {n -= 64; x = y;}
@@ -159,24 +159,24 @@ nlz_int(unsigned int x)
     y = x >>  4; if (y) {n -=  4; x = y;}
     y = x >>  2; if (y) {n -=  2; x = y;}
     y = x >>  1; if (y) {return n - 2;}
-    return (int)(n - x);
+    return (unsigned int)(n - x);
 #endif
 }
 
-static inline int
+static inline unsigned int
 nlz_long(unsigned long x)
 {
 #if defined(HAVE_BUILTIN___BUILTIN_CLZL)
     if (x == 0) return SIZEOF_LONG * CHAR_BIT;
-    return __builtin_clzl(x);
+    return (unsigned int)__builtin_clzl(x);
 #else
     unsigned long y;
 # if 64 < SIZEOF_LONG * CHAR_BIT
-    int n = 128;
+    unsigned int n = 128;
 # elif 32 < SIZEOF_LONG * CHAR_BIT
-    int n = 64;
+    unsigned int n = 64;
 # else
-    int n = 32;
+    unsigned int n = 32;
 # endif
 # if 64 < SIZEOF_LONG * CHAR_BIT
     y = x >> 64; if (y) {n -= 64; x = y;}
@@ -189,25 +189,25 @@ nlz_long(unsigned long x)
     y = x >>  4; if (y) {n -=  4; x = y;}
     y = x >>  2; if (y) {n -=  2; x = y;}
     y = x >>  1; if (y) {return n - 2;}
-    return (int)(n - x);
+    return (unsigned int)(n - x);
 #endif
 }
 
 #ifdef HAVE_LONG_LONG
-static inline int
+static inline unsigned int
 nlz_long_long(unsigned LONG_LONG x)
 {
 #if defined(HAVE_BUILTIN___BUILTIN_CLZLL)
     if (x == 0) return SIZEOF_LONG_LONG * CHAR_BIT;
-    return __builtin_clzll(x);
+    return (unsigned int)__builtin_clzll(x);
 #else
     unsigned LONG_LONG y;
 # if 64 < SIZEOF_LONG_LONG * CHAR_BIT
-    int n = 128;
+    unsigned int n = 128;
 # elif 32 < SIZEOF_LONG_LONG * CHAR_BIT
-    int n = 64;
+    unsigned int n = 64;
 # else
-    int n = 32;
+    unsigned int n = 32;
 # endif
 # if 64 < SIZEOF_LONG_LONG * CHAR_BIT
     y = x >> 64; if (y) {n -= 64; x = y;}
@@ -220,17 +220,17 @@ nlz_long_long(unsigned LONG_LONG x)
     y = x >>  4; if (y) {n -=  4; x = y;}
     y = x >>  2; if (y) {n -=  2; x = y;}
     y = x >>  1; if (y) {return n - 2;}
-    return (int)(n - x);
+    return (unsigned int)(n - x);
 #endif
 }
 #endif
 
 #ifdef HAVE_UINT128_T
-static inline int
+static inline unsigned int
 nlz_int128(uint128_t x)
 {
     uint128_t y;
-    int n = 128;
+    unsigned int n = 128;
     y = x >> 64; if (y) {n -= 64; x = y;}
     y = x >> 32; if (y) {n -= 32; x = y;}
     y = x >> 16; if (y) {n -= 16; x = y;}
@@ -238,12 +238,13 @@ nlz_int128(uint128_t x)
     y = x >>  4; if (y) {n -=  4; x = y;}
     y = x >>  2; if (y) {n -=  2; x = y;}
     y = x >>  1; if (y) {return n - 2;}
-    return (int)(n - x);
+    return (unsigned int)(n - x);
 }
 #endif
 
-static inline int
-nlz_intptr(uintptr_t x) {
+static inline unsigned int
+nlz_intptr(uintptr_t x)
+{
 #if SIZEOF_VOIDP == 8
     return nlz_long_long(x);
 #elif SIZEOF_VOIDP == 4
@@ -251,10 +252,11 @@ nlz_intptr(uintptr_t x) {
 #endif
 }
 
-static inline int
-rb_popcount32(uint32_t x) {
+static inline unsigned int
+rb_popcount32(uint32_t x)
+{
 #ifdef HAVE_BUILTIN___BUILTIN_POPCOUNT
-    return __builtin_popcount(x);
+    return (unsigned int)__builtin_popcount(x);
 #else
     x = (x & 0x55555555) + (x >> 1 & 0x55555555);
     x = (x & 0x33333333) + (x >> 2 & 0x33333333);
@@ -265,7 +267,8 @@ rb_popcount32(uint32_t x) {
 }
 
 static inline int
-rb_popcount64(uint64_t x) {
+rb_popcount64(uint64_t x)
+{
 #ifdef HAVE_BUILTIN___BUILTIN_POPCOUNT
     return __builtin_popcountll(x);
 #else
@@ -279,7 +282,8 @@ rb_popcount64(uint64_t x) {
 }
 
 static inline int
-rb_popcount_intptr(uintptr_t x) {
+rb_popcount_intptr(uintptr_t x)
+{
 #if SIZEOF_VOIDP == 8
     return rb_popcount64(x);
 #elif SIZEOF_VOIDP == 4
@@ -288,7 +292,8 @@ rb_popcount_intptr(uintptr_t x) {
 }
 
 static inline int
-ntz_int32(uint32_t x) {
+ntz_int32(uint32_t x)
+{
 #ifdef HAVE_BUILTIN___BUILTIN_CTZ
     return __builtin_ctz(x);
 #else
@@ -297,7 +302,8 @@ ntz_int32(uint32_t x) {
 }
 
 static inline int
-ntz_int64(uint64_t x) {
+ntz_int64(uint64_t x)
+{
 #ifdef HAVE_BUILTIN___BUILTIN_CTZLL
     return __builtin_ctzll(x);
 #else
@@ -306,7 +312,8 @@ ntz_int64(uint64_t x) {
 }
 
 static inline int
-ntz_intptr(uintptr_t x) {
+ntz_intptr(uintptr_t x)
+{
 #if SIZEOF_VOIDP == 8
     return ntz_int64(x);
 #elif SIZEOF_VOIDP == 4
@@ -397,17 +404,20 @@ rb_fix_mod_fix(VALUE x, VALUE y)
 
 #if defined(HAVE_UINT128_T)
 #   define bit_length(x) \
+    (unsigned int) \
     (sizeof(x) <= SIZEOF_INT ? SIZEOF_INT * CHAR_BIT - nlz_int((unsigned int)(x)) : \
      sizeof(x) <= SIZEOF_LONG ? SIZEOF_LONG * CHAR_BIT - nlz_long((unsigned long)(x)) : \
      sizeof(x) <= SIZEOF_LONG_LONG ? SIZEOF_LONG_LONG * CHAR_BIT - nlz_long_long((unsigned LONG_LONG)(x)) : \
      SIZEOF_INT128_T * CHAR_BIT - nlz_int128((uint128_t)(x)))
 #elif defined(HAVE_LONG_LONG)
 #   define bit_length(x) \
+    (unsigned int) \
     (sizeof(x) <= SIZEOF_INT ? SIZEOF_INT * CHAR_BIT - nlz_int((unsigned int)(x)) : \
      sizeof(x) <= SIZEOF_LONG ? SIZEOF_LONG * CHAR_BIT - nlz_long((unsigned long)(x)) : \
      SIZEOF_LONG_LONG * CHAR_BIT - nlz_long_long((unsigned LONG_LONG)(x)))
 #else
 #   define bit_length(x) \
+    (unsigned int) \
     (sizeof(x) <= SIZEOF_INT ? SIZEOF_INT * CHAR_BIT - nlz_int((unsigned int)(x)) : \
      SIZEOF_LONG * CHAR_BIT - nlz_long((unsigned long)(x)))
 #endif
@@ -485,7 +495,7 @@ struct RBignum {
         BDIGIT ary[BIGNUM_EMBED_LEN_MAX];
     } as;
 };
-#define BIGNUM_SIGN_BIT FL_USER1
+#define BIGNUM_SIGN_BIT ((VALUE)FL_USER1)
 /* sign: positive:1, negative:0 */
 #define BIGNUM_SIGN(b) ((RBASIC(b)->flags & BIGNUM_SIGN_BIT) != 0)
 #define BIGNUM_SET_SIGN(b,sign) \
@@ -495,13 +505,13 @@ struct RBignum {
 #define BIGNUM_NEGATIVE_P(b) (!BIGNUM_SIGN(b))
 #define BIGNUM_NEGATE(b) (RBASIC(b)->flags ^= BIGNUM_SIGN_BIT)
 
-#define BIGNUM_EMBED_FLAG FL_USER2
-#define BIGNUM_EMBED_LEN_MASK (FL_USER5|FL_USER4|FL_USER3)
+#define BIGNUM_EMBED_FLAG ((VALUE)FL_USER2)
+#define BIGNUM_EMBED_LEN_MASK ((VALUE)(FL_USER5|FL_USER4|FL_USER3))
 #define BIGNUM_EMBED_LEN_SHIFT (FL_USHIFT+BIGNUM_EMBED_LEN_NUMBITS)
 #define BIGNUM_LEN(b) \
     ((RBASIC(b)->flags & BIGNUM_EMBED_FLAG) ? \
-     (long)((RBASIC(b)->flags >> BIGNUM_EMBED_LEN_SHIFT) & \
-            (BIGNUM_EMBED_LEN_MASK >> BIGNUM_EMBED_LEN_SHIFT)) : \
+     (size_t)((RBASIC(b)->flags >> BIGNUM_EMBED_LEN_SHIFT) & \
+	      (BIGNUM_EMBED_LEN_MASK >> BIGNUM_EMBED_LEN_SHIFT)) : \
      RBIGNUM(b)->as.heap.len)
 /* LSB:BIGNUM_DIGITS(b)[0], MSB:BIGNUM_DIGITS(b)[BIGNUM_LEN(b)-1] */
 #define BIGNUM_DIGITS(b) \
@@ -559,7 +569,7 @@ struct RHash {
 #undef RHASH_SIZE
 #define RHASH_ITER_LEV(h) (RHASH(h)->iter_lev)
 #define RHASH_IFNONE(h) (RHASH(h)->ifnone)
-#define RHASH_SIZE(h) (RHASH(h)->ntbl ? (st_index_t)RHASH(h)->ntbl->num_entries : 0)
+#define RHASH_SIZE(h) (RHASH(h)->ntbl ? RHASH(h)->ntbl->num_entries : (st_index_t)0)
 #endif
 
 /* missing/setproctitle.c */
@@ -834,8 +844,8 @@ enum {
 };
 
 struct cmp_opt_data {
-    int opt_methods;
-    int opt_inited;
+    unsigned int opt_methods;
+    unsigned int opt_inited;
 };
 
 #define NEW_CMP_OPT_MEMO(type, value) \
@@ -1088,6 +1098,7 @@ long rb_objid_hash(st_index_t index);
 long rb_dbl_long_hash(double d);
 st_table *rb_init_identtable(void);
 st_table *rb_init_identtable_with_size(st_index_t size);
+VALUE rb_hash_compare_by_id_p(VALUE hash);
 
 #define RHASH_TBL_RAW(h) rb_hash_tbl_raw(h)
 VALUE rb_hash_keys(VALUE hash);
@@ -1141,16 +1152,25 @@ void Init_newline(void);
 #define FIXNUM_NEGATIVE_P(num) ((SIGNED_VALUE)(num) < 0)
 #define FIXNUM_ZERO_P(num) ((num) == INT2FIX(0))
 
+#define INT_NEGATIVE_P(x) (FIXNUM_P(x) ? FIXNUM_NEGATIVE_P(x) : BIGNUM_NEGATIVE_P(x))
+
 #ifndef ROUND_DEFAULT
-# define ROUND_DEFAULT RUBY_NUM_ROUND_HALF_EVEN
+# define ROUND_DEFAULT RUBY_NUM_ROUND_HALF_UP
 #endif
 enum ruby_num_rounding_mode {
     RUBY_NUM_ROUND_HALF_UP,
     RUBY_NUM_ROUND_HALF_EVEN,
+    RUBY_NUM_ROUND_HALF_DOWN,
     RUBY_NUM_ROUND_DEFAULT = ROUND_DEFAULT
 };
-#define ROUND_TO(mode, up, even) \
-    ((mode) == RUBY_NUM_ROUND_HALF_EVEN ? even : up)
+#define ROUND_TO(mode, even, up, down) \
+    ((mode) == RUBY_NUM_ROUND_HALF_EVEN ? even : \
+     (mode) == RUBY_NUM_ROUND_HALF_UP ? up : down)
+#define ROUND_FUNC(mode, name) \
+    ROUND_TO(mode, name##_half_even, name##_half_up, name##_half_down)
+#define ROUND_CALL(mode, name, args) \
+    ROUND_TO(mode, name##_half_even args, \
+	     name##_half_up args, name##_half_down args)
 
 int rb_num_to_uint(VALUE val, unsigned int *ret);
 VALUE ruby_num_interval_step_size(VALUE from, VALUE to, VALUE step, int excl);
@@ -1160,6 +1180,7 @@ int rb_num_negative_p(VALUE);
 VALUE rb_int_succ(VALUE num);
 VALUE rb_int_pred(VALUE num);
 VALUE rb_int_uminus(VALUE num);
+VALUE rb_float_uminus(VALUE num);
 VALUE rb_int_plus(VALUE x, VALUE y);
 VALUE rb_int_minus(VALUE x, VALUE y);
 VALUE rb_int_mul(VALUE x, VALUE y);
@@ -1169,6 +1190,8 @@ VALUE rb_int_round(VALUE num, int ndigits, enum ruby_num_rounding_mode mode);
 VALUE rb_int2str(VALUE num, int base);
 VALUE rb_dbl_hash(double d);
 VALUE rb_fix_plus(VALUE x, VALUE y);
+VALUE rb_int_gt(VALUE x, VALUE y);
+VALUE rb_float_gt(VALUE x, VALUE y);
 VALUE rb_int_ge(VALUE x, VALUE y);
 enum ruby_num_rounding_mode rb_num_get_rounding_option(VALUE opts);
 double rb_int_fdiv_double(VALUE x, VALUE y);
@@ -1181,6 +1204,7 @@ VALUE rb_int_and(VALUE x, VALUE y);
 VALUE rb_int_lshift(VALUE x, VALUE y);
 VALUE rb_int_div(VALUE x, VALUE y);
 VALUE rb_int_abs(VALUE num);
+VALUE rb_float_abs(VALUE flt);
 
 #if USE_FLONUM
 #define RUBY_BIT_ROTL(v, n) (((v) << (n)) | ((v) >> ((sizeof(v) * 8) - n)))
@@ -1201,7 +1225,7 @@ rb_float_flonum_value(VALUE v)
 	/* e: xx1... -> 011... */
 	/*    xx0... -> 100... */
 	/*      ^b63           */
-	t.v = RUBY_BIT_ROTR((2 - b63) | (v & ~0x03), 3);
+	t.v = RUBY_BIT_ROTR((2 - b63) | (v & ~(VALUE)0x03), 3);
 	return t.d;
     }
 #endif
@@ -1369,15 +1393,19 @@ rb_pid_t rb_fork_ruby(int *status);
 void rb_last_status_clear(void);
 
 /* rational.c */
+VALUE rb_rational_uminus(VALUE self);
 VALUE rb_rational_plus(VALUE self, VALUE other);
 VALUE rb_lcm(VALUE x, VALUE y);
 VALUE rb_rational_reciprocal(VALUE x);
 VALUE rb_cstr_to_rat(const char *, int);
+VALUE rb_rational_abs(VALUE self);
+VALUE rb_rational_cmp(VALUE self, VALUE other);
 
 /* re.c */
 VALUE rb_reg_compile(VALUE str, int options, const char *sourcefile, int sourceline);
 VALUE rb_reg_check_preprocess(VALUE);
 long rb_reg_search0(VALUE, VALUE, long, int, int);
+VALUE rb_reg_match_p(VALUE re, VALUE str, long pos);
 void rb_backref_set_string(VALUE string, long pos, long len);
 int rb_match_count(VALUE match);
 int rb_match_nth_defined(int nth, VALUE match);
@@ -1431,6 +1459,8 @@ VALUE rb_id_quote_unprintable(ID);
 char *rb_str_fill_terminator(VALUE str, const int termlen);
 void rb_str_change_terminator_length(VALUE str, const int oldtermlen, const int termlen);
 VALUE rb_str_locktmp_ensure(VALUE str, VALUE (*func)(VALUE), VALUE arg);
+VALUE rb_str_tmp_frozen_acquire(VALUE str);
+void rb_str_tmp_frozen_release(VALUE str, VALUE tmp);
 VALUE rb_str_chomp_string(VALUE str, VALUE chomp);
 #ifdef RUBY_ENCODING_H
 VALUE rb_external_str_with_enc(VALUE str, rb_encoding *eenc);
@@ -1546,7 +1576,7 @@ void rb_vm_pop_cfunc_frame(void);
 int rb_vm_add_root_module(ID id, VALUE module);
 void rb_vm_check_redefinition_by_prepend(VALUE klass);
 VALUE rb_yield_refine_block(VALUE refinement, VALUE refinements);
-VALUE ruby_vm_sysstack_error_copy(void);
+VALUE ruby_vm_special_exception_copy(VALUE);
 PUREFUNC(st_table *rb_vm_fstring_table(void));
 
 
@@ -1655,6 +1685,7 @@ VALUE rb_execarg_extract_options(VALUE execarg_obj, VALUE opthash);
 void rb_execarg_setenv(VALUE execarg_obj, VALUE env);
 
 /* rational.c (export) */
+VALUE rb_gcd(VALUE x, VALUE y);
 VALUE rb_gcd_normal(VALUE self, VALUE other);
 #if defined(HAVE_LIBGMP) && defined(HAVE_GMP_H)
 VALUE rb_gcd_gmp(VALUE x, VALUE y);

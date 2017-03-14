@@ -28,12 +28,11 @@
 #define GMP_GCD_DIGITS 1
 
 #define INT_POSITIVE_P(x) (FIXNUM_P(x) ? FIXNUM_POSITIVE_P(x) : BIGNUM_POSITIVE_P(x))
-#define INT_NEGATIVE_P(x) (FIXNUM_P(x) ? FIXNUM_NEGATIVE_P(x) : BIGNUM_NEGATIVE_P(x))
 #define INT_ZERO_P(x) (FIXNUM_P(x) ? FIXNUM_ZERO_P(x) : rb_bigzero_p(x))
 
 VALUE rb_cRational;
 
-static ID id_abs, id_idiv, id_integer_p, id_negate, id_to_i,
+static ID id_abs, id_idiv, id_integer_p, id_to_i,
     id_i_num, id_i_den;
 
 #define f_boolcast(x) ((x) ? Qtrue : Qfalse)
@@ -138,7 +137,6 @@ f_abs(VALUE x)
 }
 
 fun1(integer_p)
-fun1(negate)
 
 inline static VALUE
 f_to_i(VALUE x)
@@ -263,9 +261,14 @@ rb_gcd_gmp(VALUE x, VALUE y)
 
     mpz_gcd(mz, mx, my);
 
+    mpz_clear(mx);
+    mpz_clear(my);
+
     zn = (mpz_sizeinbase(mz, 16) + SIZEOF_BDIGIT*2 - 1) / (SIZEOF_BDIGIT*2);
     z = rb_big_new(zn, 1);
     mpz_export(BIGNUM_DIGITS(z), &count, -1, sizeof(BDIGIT), 0, nails, mz);
+
+    mpz_clear(mz);
 
     return rb_big_norm(z);
 }
@@ -416,8 +419,8 @@ nurat_s_new_bang(int argc, VALUE *argv, VALUE klass)
 	    den = f_to_i(den);
 
         if (INT_NEGATIVE_P(den)) {
-	    num = f_negate(num);
-	    den = f_negate(den);
+	    num = rb_int_uminus(num);
+	    den = rb_int_uminus(den);
         }
         else if (INT_ZERO_P(den)) {
             rb_num_zerodiv();
@@ -470,9 +473,11 @@ nurat_int_value(VALUE num)
 static void
 nurat_canonicalize(VALUE *num, VALUE *den)
 {
+    assert(num != NULL && RB_INTEGER_TYPE_P(*num));
+    assert(den != NULL && RB_INTEGER_TYPE_P(*den));
     if (INT_NEGATIVE_P(*den)) {
-	*num = f_negate(*num);
-	*den = f_negate(*den);
+        *num = rb_int_uminus(*num);
+        *den = rb_int_uminus(*den);
     }
     else if (INT_ZERO_P(*den)) {
         rb_num_zerodiv();
@@ -620,10 +625,12 @@ nurat_denominator(VALUE self)
  *
  * Negates +rat+.
  */
-static VALUE
-nurat_negate(VALUE self)
+VALUE
+rb_rational_uminus(VALUE self)
 {
+    const int unused = (assert(RB_TYPE_P(self, T_RATIONAL)), 0);
     get_dat1(self);
+    (void)unused;
     return f_rational_new2(CLASS_OF(self), rb_int_uminus(dat->num), dat->den);
 }
 
@@ -719,7 +726,7 @@ static double nurat_to_double(VALUE self);
  * Performs addition.
  *
  *    Rational(2, 3)  + Rational(2, 3)   #=> (4/3)
- *    Rational(900)   + Rational(1)      #=> (900/1)
+ *    Rational(900)   + Rational(1)      #=> (901/1)
  *    Rational(-2, 9) + Rational(-9, 2)  #=> (-85/18)
  *    Rational(9, 8)  + 4                #=> (41/8)
  *    Rational(20, 9) + 9.8              #=> 12.022222222222222
@@ -1032,6 +1039,14 @@ nurat_expt(VALUE self, VALUE other)
 		num = ONE;
 		den = ONE;
 	    }
+	    if (RB_FLOAT_TYPE_P(num)) { /* infinity due to overflow */
+		if (RB_FLOAT_TYPE_P(den)) return DBL2NUM(NAN);
+		return num;
+	    }
+	    if (RB_FLOAT_TYPE_P(den)) { /* infinity due to overflow */
+		num = ZERO;
+		den = ONE;
+	    }
 	    return f_rational_new2(CLASS_OF(self), num, den);
 	}
     }
@@ -1061,8 +1076,8 @@ nurat_expt(VALUE self, VALUE other)
  *    Rational(1,3)   <=> 1               #=> -1
  *    Rational(1,3)   <=> 0.3             #=> 1
  */
-static VALUE
-nurat_cmp(VALUE self, VALUE other)
+VALUE
+rb_rational_cmp(VALUE self, VALUE other)
 {
     if (RB_INTEGER_TYPE_P(other)) {
 	{
@@ -1235,6 +1250,30 @@ nurat_negative_p(VALUE self)
     return f_boolcast(INT_NEGATIVE_P(dat->num));
 }
 
+/*
+ *  call-seq:
+ *     rat.abs       -> rat
+ *     rat.magnitude -> rat
+ *
+ *  Returns the absolute value of +rat+.
+ *
+ *  (1/2r).abs    #=> 1/2r
+ *  (-1/2r).abs   #=> 1/2r
+ *
+ *  Rational#magnitude is an alias of Rational#abs.
+ */
+
+VALUE
+rb_rational_abs(VALUE self)
+{
+    get_dat1(self);
+    if (INT_NEGATIVE_P(dat->num)) {
+        VALUE num = rb_int_abs(dat->num);
+        return nurat_s_canonicalize_internal_no_reduce(CLASS_OF(self), num, dat->den);
+    }
+    return self;
+}
+
 static VALUE
 nurat_floor(VALUE self)
 {
@@ -1288,6 +1327,31 @@ nurat_round_half_up(VALUE self)
 	num = rb_int_uminus(num);
 
     num = rb_int_plus(rb_int_mul(num, TWO), den);
+    den = rb_int_mul(den, TWO);
+    num = rb_int_idiv(num, den);
+
+    if (neg)
+	num = rb_int_uminus(num);
+
+    return num;
+}
+
+static VALUE
+nurat_round_half_down(VALUE self)
+{
+    VALUE num, den, neg;
+
+    get_dat1(self);
+
+    num = dat->num;
+    den = dat->den;
+    neg = INT_NEGATIVE_P(num);
+
+    if (neg)
+	num = rb_int_uminus(num);
+
+    num = rb_int_plus(rb_int_mul(num, TWO), den);
+    num = rb_int_minus(num, ONE);
     den = rb_int_mul(den, TWO);
     num = rb_int_idiv(num, den);
 
@@ -1458,9 +1522,7 @@ nurat_round_n(int argc, VALUE *argv, VALUE self)
     enum ruby_num_rounding_mode mode = (
 	argc = rb_scan_args(argc, argv, "*:", NULL, &opt),
 	rb_num_get_rounding_option(opt));
-    VALUE (*round_func)(VALUE) =
-	ROUND_TO(mode,
-		 nurat_round_half_up, nurat_round_half_even);
+    VALUE (*round_func)(VALUE) = ROUND_FUNC(mode, nurat_round);
     return f_round_common(argc, argv, self, round_func);
 }
 
@@ -1622,7 +1684,7 @@ nurat_rationalize(int argc, VALUE *argv, VALUE self)
 	return self;
 
     if (nurat_negative_p(self))
-	return nurat_negate(nurat_rationalize(argc, argv, nurat_negate(self)));
+	return rb_rational_uminus(nurat_rationalize(argc, argv, rb_rational_uminus(self)));
 
     rb_scan_args(argc, argv, "01", &e);
     e = f_abs(e);
@@ -2178,7 +2240,7 @@ float_rationalize(int argc, VALUE *argv, VALUE self)
     double d = RFLOAT_VALUE(self);
 
     if (d < 0.0)
-        return nurat_negate(float_rationalize(argc, argv, DBL2NUM(-d)));
+        return rb_rational_uminus(float_rationalize(argc, argv, DBL2NUM(-d)));
 
     rb_scan_args(argc, argv, "01", &e);
 
@@ -2316,11 +2378,22 @@ read_num(const char **s, int numsign, int strict,
 	    exp = rb_int_uminus(exp);
     }
 
-    if (numsign == '-')
-	*num = nurat_negate(*num);
+    if (numsign == '-') {
+	if (RB_TYPE_P(*num, T_RATIONAL)) {
+	    *num = rb_rational_uminus(*num);
+	}
+	else {
+	    *num = rb_int_uminus(*num);
+	}
+    }
     if (!NIL_P(exp)) {
 	VALUE l = f_expt10(exp);
-	*num = nurat_mul(*num, l);
+	if (RB_TYPE_P(*num, T_RATIONAL)) {
+	    *num = nurat_mul(*num, l);
+	}
+	else {
+	    *num = rb_int_mul(*num, l);
+	}
     }
     return 1;
 }
@@ -2346,8 +2419,14 @@ read_rat_nos(const char **s, int sign, int strict,
 	(*s)++;
 	if (!read_den(s, strict, &den))
 	    return 0;
-	if (!(FIXNUM_P(den) && FIX2LONG(den) == 1))
-	    *num = nurat_div(*num, den);
+	if (!(FIXNUM_P(den) && FIX2LONG(den) == 1)) {
+	    if (RB_TYPE_P(*num, T_RATIONAL)) {
+		*num = nurat_div(*num, den);
+	    }
+	    else {
+		*num = rb_int_div(*num, den);
+	    }
+	}
     }
     return 1;
 }
@@ -2594,7 +2673,6 @@ Init_Rational(void)
     id_abs = rb_intern("abs");
     id_idiv = rb_intern("div");
     id_integer_p = rb_intern("integer?");
-    id_negate = rb_intern("-@");
     id_to_i = rb_intern("to_i");
     id_i_num = rb_intern("@numerator");
     id_i_den = rb_intern("@denominator");
@@ -2616,7 +2694,7 @@ Init_Rational(void)
     rb_define_method(rb_cRational, "numerator", nurat_numerator, 0);
     rb_define_method(rb_cRational, "denominator", nurat_denominator, 0);
 
-    rb_define_method(rb_cRational, "-@", nurat_negate, 0);
+    rb_define_method(rb_cRational, "-@", rb_rational_uminus, 0);
     rb_define_method(rb_cRational, "+", rb_rational_plus, 1);
     rb_define_method(rb_cRational, "-", nurat_sub, 1);
     rb_define_method(rb_cRational, "*", nurat_mul, 1);
@@ -2625,7 +2703,7 @@ Init_Rational(void)
     rb_define_method(rb_cRational, "fdiv", nurat_fdiv, 1);
     rb_define_method(rb_cRational, "**", nurat_expt, 1);
 
-    rb_define_method(rb_cRational, "<=>", nurat_cmp, 1);
+    rb_define_method(rb_cRational, "<=>", rb_rational_cmp, 1);
     rb_define_method(rb_cRational, "==", nurat_eqeq_p, 1);
     rb_define_method(rb_cRational, "coerce", nurat_coerce, 1);
 
@@ -2640,6 +2718,8 @@ Init_Rational(void)
 #endif
     rb_define_method(rb_cRational, "positive?", nurat_positive_p, 0);
     rb_define_method(rb_cRational, "negative?", nurat_negative_p, 0);
+    rb_define_method(rb_cRational, "abs", rb_rational_abs, 0);
+    rb_define_method(rb_cRational, "magnitude", rb_rational_abs, 0);
 
     rb_define_method(rb_cRational, "floor", nurat_floor_n, -1);
     rb_define_method(rb_cRational, "ceil", nurat_ceil_n, -1);
