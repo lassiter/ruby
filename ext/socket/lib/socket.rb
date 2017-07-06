@@ -194,7 +194,7 @@ class Addrinfo
 
   # creates a listening socket bound to self.
   def listen(backlog=Socket::SOMAXCONN)
-    sock = Socket.new(self.pfamily, self.socktype, self.protocol)
+    sock = ServerSocket.new(self.pfamily, self.socktype, self.protocol)
     begin
       sock.ipv6only! if self.ipv6?
       sock.setsockopt(:SOCKET, :REUSEADDR, 1)
@@ -270,6 +270,9 @@ class BasicSocket < IO
     end
     addr
   end
+
+  # JRuby does not do this dance to get around keyword arguments.
+  unless RUBY_ENGINE == 'jruby'
 
   # call-seq:
   #    basicsocket.sendmsg(mesg, flags=0, dest_sockaddr=nil, *controls) => numbytes_sent
@@ -442,6 +445,8 @@ class BasicSocket < IO
                        scm_rights: false, exception: true)
     __recvmsg_nonblock(dlen, flags, clen, scm_rights, exception)
   end
+
+  end # unless RUBY_ENGINE == 'jruby'
 end
 
 class Socket < BasicSocket
@@ -451,6 +456,9 @@ class Socket < BasicSocket
       self.setsockopt(:IPV6, :V6ONLY, 1)
     end
   end
+
+  # JRuby does not do this dance to get around keyword arguments.
+  unless RUBY_ENGINE == 'jruby'
 
   # call-seq:
   #   socket.recvfrom_nonblock(maxlen[, flags[, outbuf[, opts]]]) => [mesg, sender_addrinfo]
@@ -579,6 +587,8 @@ class Socket < BasicSocket
     __accept_nonblock(exception)
   end
 
+  end # unless RUBY_ENGINE == 'jruby'
+
   # :call-seq:
   #   Socket.tcp(host, port, local_host=nil, local_port=nil, [opts]) {|socket| ... }
   #   Socket.tcp(host, port, local_host=nil, local_port=nil, [opts])
@@ -658,7 +668,7 @@ class Socket < BasicSocket
       port = nil
       ai_list.each {|ai|
         begin
-          s = Socket.new(ai.pfamily, ai.socktype, ai.protocol)
+          s = ServerSocket.new(ai.pfamily, ai.socktype, ai.protocol)
         rescue SystemCallError
           next
         end
@@ -1194,9 +1204,9 @@ class Socket < BasicSocket
   #
   # === See
   #  # Socket#connect
-  def connect_nonblock(addr, exception: true)
-    __connect_nonblock(addr, exception)
-  end
+  #def connect_nonblock(addr, exception: true)
+  #  __connect_nonblock(addr, exception)
+  #end
 end
 
 class UDPSocket < IPSocket
@@ -1252,9 +1262,9 @@ class UDPSocket < IPSocket
   #
   # === See
   # * Socket#recvfrom
-  def recvfrom_nonblock(len, flag = 0, outbuf = nil, exception: true)
-    __recvfrom_nonblock(len, flag, outbuf, exception)
-  end
+  #def recvfrom_nonblock(len, flag = 0, outbuf = nil, exception: true)
+  #  __recvfrom_nonblock(len, flag, outbuf, exception)
+  #end
 end
 
 class TCPServer < TCPSocket
@@ -1294,9 +1304,9 @@ class TCPServer < TCPSocket
   # === See
   # * TCPServer#accept
   # * Socket#accept
-  def accept_nonblock(exception: true)
-    __accept_nonblock(exception)
-  end
+  #def accept_nonblock(exception: true)
+  #  __accept_nonblock(exception)
+  #end
 end
 
 class UNIXServer < UNIXSocket
@@ -1335,7 +1345,7 @@ class UNIXServer < UNIXSocket
   # === See
   # * UNIXServer#accept
   # * Socket#accept
-  def accept_nonblock(exception: true)
-    __accept_nonblock(exception)
-  end
+  #def accept_nonblock(exception: true)
+  #  __accept_nonblock(exception)
+  #end
 end if defined?(UNIXSocket)
