@@ -119,22 +119,24 @@ class Dir
     end
 
     def create(basename, tmpdir=nil, max_try: nil, **opts)
-      if $SAFE > 0 and tmpdir.tainted?
-        tmpdir = '/tmp'
-      else
-        tmpdir ||= tmpdir()
-      end
-      n = nil
-      begin
-        path = File.join(tmpdir, make_tmpname(basename, n))
-        yield(path, n, opts)
-      rescue Errno::EEXIST
-        n ||= 0
-        n += 1
-        retry if !max_try or n < max_try
-        raise "cannot generate temporary name using `#{basename}' under `#{tmpdir}'"
-      end
-      path
+    if $SAFE > 0 and tmpdir.tainted?
+      tmpdir = '/tmp'
+    else
+      tmpdir ||= tmpdir()
+    end
+    n = nil
+    begin
+      # We use the second form here because chdir + ./ files won't open right (http://bugs.jruby.org/3698)
+      # path = File.join(tmpdir, make_tmpname(basename, n))
+      path = File.expand_path(make_tmpname(basename, n), tmpdir)
+      yield(path, n, opts)
+    rescue Errno::EEXIST
+      n ||= 0
+      n += 1
+      retry if !max_try or n < max_try
+      raise "cannot generate temporary name using `#{basename}' under `#{tmpdir}'"
+    end
+    path
     end
   end
 end
