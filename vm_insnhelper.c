@@ -837,7 +837,7 @@ vm_get_ev_const(rb_execution_context_t *ec, VALUE orig_klass, ID id, int is_defi
 			if (am == klass) break;
 			am = klass;
 			if (is_defined) return 1;
-			if (rb_autoloading_value(klass, id, &av)) return av;
+			if (rb_autoloading_value(klass, id, &av, NULL)) return av;
 			rb_autoload_load(klass, id);
 			goto search_continue;
 		    }
@@ -3186,16 +3186,15 @@ vm_opt_newarray_max(rb_num_t num, const VALUE *ptr)
 	}
 	else {
 	    struct cmp_opt_data cmp_opt = { 0, 0 };
-	    VALUE result = Qundef;
+	    VALUE result = *ptr;
 	    rb_num_t i = num - 1;
-	    result = ptr[i];
 	    while (i-- > 0) {
-		const VALUE v = ptr[i];
-		if (result == Qundef || OPTIMIZED_CMP(v, result, cmp_opt) > 0) {
+		const VALUE v = *++ptr;
+		if (OPTIMIZED_CMP(v, result, cmp_opt) > 0) {
 		    result = v;
 		}
 	    }
-	    return result == Qundef ? Qnil : result;
+	    return result;
 	}
     }
     else {
@@ -3213,16 +3212,15 @@ vm_opt_newarray_min(rb_num_t num, const VALUE *ptr)
 	}
 	else {
 	    struct cmp_opt_data cmp_opt = { 0, 0 };
-	    VALUE result = Qundef;
+	    VALUE result = *ptr;
 	    rb_num_t i = num - 1;
-	    result = ptr[i];
 	    while (i-- > 0) {
-		const VALUE v = ptr[i];
-		if (result == Qundef || OPTIMIZED_CMP(v, result, cmp_opt) < 0) {
+		const VALUE v = *++ptr;
+		if (OPTIMIZED_CMP(v, result, cmp_opt) < 0) {
 		    result = v;
 		}
 	    }
-	    return result == Qundef ? Qnil : result;
+	    return result;
 	}
     }
     else {

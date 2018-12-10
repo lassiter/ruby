@@ -327,11 +327,11 @@ warning_write(int argc, VALUE *argv, VALUE buf)
 static VALUE
 rb_warn_m(int argc, VALUE *argv, VALUE exc)
 {
-    VALUE opts, uplevel = Qnil;
+    VALUE opts, location = Qnil;
 
     if (!NIL_P(ruby_verbose) && argc > 0 &&
 	    (argc = rb_scan_args(argc, argv, "*:", NULL, &opts)) > 0) {
-	VALUE str = argv[0];
+	VALUE str = argv[0], uplevel = Qnil;
 	if (!NIL_P(opts)) {
 	    static ID kwds[1];
 	    if (!kwds[0]) {
@@ -342,23 +342,32 @@ rb_warn_m(int argc, VALUE *argv, VALUE exc)
 		uplevel = Qnil;
 	    }
 	    else if (!NIL_P(uplevel)) {
-		uplevel = LONG2NUM((long)NUM2ULONG(uplevel) + 1);
-		uplevel = rb_vm_thread_backtrace_locations(1, &uplevel, GET_THREAD()->self);
-		if (!NIL_P(uplevel)) {
-		    uplevel = rb_ary_entry(uplevel, 0);
+		VALUE args[2];
+		long lev = NUM2LONG(uplevel);
+		if (lev < 0) {
+		    rb_raise(rb_eArgError, "negative level (%ld)", lev);
+		}
+		args[0] = LONG2NUM(lev + 1);
+		args[1] = INT2FIX(1);
+		location = rb_vm_thread_backtrace_locations(2, args, GET_THREAD()->self);
+		if (!NIL_P(location)) {
+		    location = rb_ary_entry(location, 0);
 		}
 	    }
 	}
 	if (argc > 1 || !NIL_P(uplevel) || !end_with_asciichar(str, '\n')) {
+	    VALUE path;
 	    if (NIL_P(uplevel)) {
 		str = rb_str_tmp_new(0);
 	    }
+	    else if (NIL_P(location) ||
+		     NIL_P(path = rb_funcall(location, rb_intern("path"), 0))) {
+		str = rb_str_new_cstr("warning: ");
+	    }
 	    else {
-		VALUE path;
-		path = rb_funcall(uplevel, rb_intern("path"), 0);
-		str = rb_sprintf("%s:%li: warning: ",
+		str = rb_sprintf("%s:%ld: warning: ",
 		    rb_string_value_ptr(&path),
-		    NUM2LONG(rb_funcall(uplevel, rb_intern("lineno"), 0)));
+		    NUM2LONG(rb_funcall(location, rb_intern("lineno"), 0)));
 	    }
 	    RBASIC_SET_CLASS(str, rb_cWarningBuffer);
 	    rb_io_puts(argc, argv, str);
@@ -859,7 +868,7 @@ static VALUE rb_eNOERROR;
 static ID id_new, id_cause, id_message, id_backtrace;
 static ID id_name, id_key, id_args, id_Errno, id_errno, id_i_path;
 static ID id_receiver, id_iseq, id_local_variables;
-static ID id_private_call_p;
+static ID id_private_call_p, id_top, id_bottom;
 extern ID ruby_static_id_status;
 #define id_bt idBt
 #define id_bt_locations idBt_locations
@@ -951,24 +960,89 @@ exc_to_s(VALUE exc)
 }
 
 /* FIXME: Include eval_error.c */
-void rb_error_write(VALUE errinfo, VALUE errat, VALUE str);
+void rb_error_write(VALUE errinfo, VALUE emesg, VALUE errat, VALUE str, VALUE highlight, VALUE reverse);
+
+VALUE
+rb_get_message(VALUE exc)
+{
+    VALUE e = rb_check_funcall(exc, id_message, 0, 0);
+    if (e == Qundef) return Qnil;
+    if (!RB_TYPE_P(e, T_STRING)) e = rb_check_string_type(e);
+    return e;
+}
 
 /*
  * call-seq:
- *   exception.full_message  ->  string
+ *    Exception.to_tty?   ->  true or false
  *
- * Returns formatted string of <i>exception</i>.
+ * Returns +true+ if exception messages will be sent to a tty.
+ */
+static VALUE
+exc_s_to_tty_p(VALUE self)
+{
+    return rb_stderr_tty_p() ? Qtrue : Qfalse;
+}
+
+/*
+ * call-seq:
+ *   exception.full_message(highlight: bool, order: [:top or :bottom]) ->  string
+ *
+ * Returns formatted string of _exception_.
  * The returned string is formatted using the same format that Ruby uses
- * when printing an uncaught exceptions to stderr. So it may differ by
- * <code>$stderr.tty?</code> at the timing of a call.
+ * when printing an uncaught exceptions to stderr.
+ *
+ * If _highlight_ is +true+ the default error handler will send the
+ * messages to a tty.
+ *
+ * _order_ must be either of +:top+ or +:bottom+, and places the error
+ * message and the innermost backtrace come at the top or the bottom.
+ *
+ * The default values of these options depend on <code>$stderr</code>
+ * and its +tty?+ at the timing of a call.
  */
 
 static VALUE
-exc_full_message(VALUE exc)
+exc_full_message(int argc, VALUE *argv, VALUE exc)
 {
-    VALUE str = rb_str_new2("");
-    VALUE errat = rb_get_backtrace(exc);
-    rb_error_write(exc, errat, str);
+    VALUE opt, str, emesg, errat;
+    enum {kw_highlight, kw_order, kw_max_};
+    static ID kw[kw_max_];
+    VALUE args[kw_max_] = {Qnil, Qnil};
+
+    rb_scan_args(argc, argv, "0:", &opt);
+    if (!NIL_P(opt)) {
+	if (!kw[0]) {
+#define INIT_KW(n) kw[kw_##n] = rb_intern_const(#n)
+	    INIT_KW(highlight);
+	    INIT_KW(order);
+#undef INIT_KW
+	}
+	rb_get_kwargs(opt, kw, 0, kw_max_, args);
+	switch (args[kw_highlight]) {
+	  default:
+	    rb_raise(rb_eArgError, "expected true or false as "
+		     "highlight: %+"PRIsVALUE, args[kw_highlight]);
+	  case Qundef: args[kw_highlight] = Qnil; break;
+	  case Qtrue: case Qfalse: case Qnil: break;
+	}
+	if (args[kw_order] == Qundef) {
+	    args[kw_order] = Qnil;
+	}
+	else {
+	    ID id = rb_check_id(&args[kw_order]);
+	    if (id == id_bottom) args[kw_order] = Qtrue;
+	    else if (id == id_top) args[kw_order] = Qfalse;
+	    else {
+		rb_raise(rb_eArgError, "expected :top or :down as "
+			 "order: %+"PRIsVALUE, args[kw_order]);
+	    }
+	}
+    }
+    str = rb_str_new2("");
+    errat = rb_get_backtrace(exc);
+    emesg = rb_get_message(exc);
+
+    rb_error_write(exc, emesg, errat, str, args[kw_highlight], args[kw_order]);
     return str;
 }
 
@@ -1062,19 +1136,21 @@ VALUE
 rb_get_backtrace(VALUE exc)
 {
     ID mid = id_backtrace;
+    VALUE info;
     if (rb_method_basic_definition_p(CLASS_OF(exc), id_backtrace)) {
-	VALUE info, klass = rb_eException;
+	VALUE klass = rb_eException;
 	rb_execution_context_t *ec = GET_EC();
 	if (NIL_P(exc))
 	    return Qnil;
 	EXEC_EVENT_HOOK(ec, RUBY_EVENT_C_CALL, exc, mid, mid, klass, Qundef);
 	info = exc_backtrace(exc);
 	EXEC_EVENT_HOOK(ec, RUBY_EVENT_C_RETURN, exc, mid, mid, klass, info);
-	if (NIL_P(info))
-	    return Qnil;
-	return rb_check_backtrace(info);
     }
-    return rb_funcallv(exc, mid, 0, 0);
+    else {
+	info = rb_funcallv(exc, mid, 0, 0);
+    }
+    if (NIL_P(info)) return Qnil;
+    return rb_check_backtrace(info);
 }
 
 /*
@@ -2234,6 +2310,7 @@ syserr_eqq(VALUE self, VALUE exc)
  *      * FloatDomainError
  *    * RegexpError
  *    * RuntimeError -- default for +raise+
+ *      * FrozenError
  *    * SystemCallError
  *      * Errno::*
  *    * ThreadError
@@ -2249,12 +2326,13 @@ Init_Exception(void)
 {
     rb_eException   = rb_define_class("Exception", rb_cObject);
     rb_define_singleton_method(rb_eException, "exception", rb_class_new_instance, -1);
+    rb_define_singleton_method(rb_eException, "to_tty?", exc_s_to_tty_p, 0);
     rb_define_method(rb_eException, "exception", exc_exception, -1);
     rb_define_method(rb_eException, "initialize", exc_initialize, -1);
     rb_define_method(rb_eException, "==", exc_equal, 1);
     rb_define_method(rb_eException, "to_s", exc_to_s, 0);
     rb_define_method(rb_eException, "message", exc_message, 0);
-    rb_define_method(rb_eException, "full_message", exc_full_message, 0);
+    rb_define_method(rb_eException, "full_message", exc_full_message, -1);
     rb_define_method(rb_eException, "inspect", exc_inspect, 0);
     rb_define_method(rb_eException, "backtrace", exc_backtrace, 0);
     rb_define_method(rb_eException, "backtrace_locations", exc_backtrace_locations, 0);
@@ -2342,6 +2420,8 @@ Init_Exception(void)
     id_errno = rb_intern_const("errno");
     id_i_path = rb_intern_const("@path");
     id_warn = rb_intern_const("warn");
+    id_top = rb_intern_const("top");
+    id_bottom = rb_intern_const("bottom");
     id_iseq = rb_make_internal_id();
 }
 

@@ -2754,7 +2754,7 @@ rb_ary_collect(VALUE ary)
     RETURN_SIZED_ENUMERATOR(ary, 0, 0, ary_enum_length);
     collect = rb_ary_new2(RARRAY_LEN(ary));
     for (i = 0; i < RARRAY_LEN(ary); i++) {
-	rb_ary_push(collect, rb_yield(RARRAY_AREF(ary, i)));
+	rb_ary_push(collect, rb_yield_force_blockarg(RARRAY_AREF(ary, i)));
     }
     return collect;
 }
@@ -4953,7 +4953,7 @@ rb_ary_sample(int argc, VALUE *argv, VALUE ary)
 	long max_idx = 0;
 #undef RUBY_UNTYPED_DATA_WARNING
 #define RUBY_UNTYPED_DATA_WARNING 0
-	VALUE vmemo = Data_Wrap_Struct(0, 0, 0, st_free_table);
+	VALUE vmemo = Data_Wrap_Struct(0, 0, st_free_table, 0);
 	st_table *memo = st_init_numtable_with_size(n);
 	DATA_PTR(vmemo) = memo;
 	result = rb_ary_new_capa(n);
@@ -5953,6 +5953,20 @@ rb_ary_sum(int argc, VALUE *argv, VALUE ary)
                 x = rb_num2dbl(e);
             else
                 goto not_float;
+
+            if (isnan(f)) continue;
+            if (isnan(x)) {
+                f = x;
+                continue;
+            }
+            if (isinf(x)) {
+                if (isinf(f) && signbit(x) != signbit(f))
+                    f = NAN;
+                else
+                    f = x;
+                continue;
+            }
+            if (isinf(f)) continue;
 
             t = f + x;
             if (fabs(f) >= fabs(x))

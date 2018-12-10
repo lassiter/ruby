@@ -230,8 +230,8 @@ static const uint64_t prime2 = ((uint64_t)0xcdb32970 << 32) | 0x830fcaa1;
 static inline uint64_t
 mult_and_mix(uint64_t m1, uint64_t m2)
 {
-#if defined(__GNUC__) && UINT_MAX != ULONG_MAX
-    __uint128_t r = (__uint128_t) m1 * (__uint128_t) m2;
+#if defined HAVE_UINT128_T
+    uint128_t r = (uint128_t) m1 * (uint128_t) m2;
     return (uint64_t) (r >> 64) ^ (uint64_t) r;
 #else
     uint64_t hm1 = m1 >> 32, hm2 = m2 >> 32;
@@ -1910,6 +1910,8 @@ rb_hash_transform_keys(VALUE hash)
     return result;
 }
 
+static VALUE rb_hash_flatten(int argc, VALUE *argv, VALUE hash);
+
 /*
  *  call-seq:
  *     hsh.transform_keys! {|key| block } -> hsh
@@ -1933,12 +1935,14 @@ rb_hash_transform_keys_bang(VALUE hash)
     RETURN_SIZED_ENUMERATOR(hash, 0, 0, hash_enum_size);
     rb_hash_modify_check(hash);
     if (RHASH(hash)->ntbl) {
-	long i;
-	VALUE keys = rb_hash_keys(hash);
-	for (i = 0; i < RARRAY_LEN(keys); ++i) {
-	    VALUE key = RARRAY_AREF(keys, i), new_key = rb_yield(key);
-	    rb_hash_aset(hash, new_key, rb_hash_delete(hash, key));
-	}
+        long i;
+        VALUE pairs = rb_hash_flatten(0, NULL, hash);
+        rb_hash_clear(hash);
+        for (i = 0; i < RARRAY_LEN(pairs); i += 2) {
+            VALUE key = RARRAY_AREF(pairs, i), new_key = rb_yield(key),
+                  val = RARRAY_AREF(pairs, i+1);
+            rb_hash_aset(hash, new_key, val);
+        }
     }
     return hash;
 }
@@ -3258,7 +3262,7 @@ env_enc_str_new(const char *ptr, long len, rb_encoding *enc)
     rb_encoding *utf8 = rb_utf8_encoding();
     VALUE str = rb_enc_str_new(NULL, 0, (internal ? internal : enc));
     if (NIL_P(rb_str_cat_conv_enc_opts(str, 0, ptr, len, utf8, ecflags, Qnil))) {
-	rb_str_initialize(str, ptr, len, utf8);
+        rb_str_initialize(str, ptr, len, NULL);
     }
 #else
     VALUE str = rb_external_str_new_with_enc(ptr, len, enc);
@@ -3289,6 +3293,9 @@ env_str_new2(const char *ptr)
 }
 
 static int env_path_tainted(const char *);
+
+static const char TZ_ENV[] = "TZ";
+extern int ruby_tz_update;
 
 static rb_encoding *
 env_encoding_for(const char *name, const char *ptr)
@@ -3370,6 +3377,9 @@ env_delete(VALUE obj, VALUE name)
 	if (ENVMATCH(nam, PATH_ENV)) {
 	    RB_GC_GUARD(name);
 	    path_tainted = 0;
+	}
+	else if (ENVMATCH(nam, TZ_ENV)) {
+	    ruby_tz_update = 0;
 	}
 	return value;
     }
@@ -3729,6 +3739,9 @@ env_aset(VALUE obj, VALUE nm, VALUE val)
 	else {
 	    path_tainted_p(value);
 	}
+    }
+    else if (ENVMATCH(name, TZ_ENV)) {
+	ruby_tz_update = 0;
     }
     return val;
 }

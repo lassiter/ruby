@@ -85,12 +85,16 @@ error_print(rb_execution_context_t *ec)
     rb_ec_error_print(ec, ec->errinfo);
 }
 
+#define CSI_BEGIN "\033["
+#define CSI_SGR "m"
+
+static const char underline[] = CSI_BEGIN"1;4"CSI_SGR;
+static const char bold[] = CSI_BEGIN"1"CSI_SGR;
+static const char reset[] = CSI_BEGIN""CSI_SGR;
+
 static void
 print_errinfo(const VALUE eclass, const VALUE errat, const VALUE emesg, const VALUE str, int colored)
 {
-    static const char underline[] = "\033[4;1m";
-    static const char bold[] = "\033[1m";
-    static const char reset[] = "\033[m";
     const char *einfo = "";
     long elen = 0;
     VALUE mesg;
@@ -188,9 +192,9 @@ print_backtrace(const VALUE eclass, const VALUE errat, const VALUE str, int reve
 }
 
 void
-rb_error_write(VALUE errinfo, VALUE errat, VALUE str)
+rb_error_write(VALUE errinfo, VALUE emesg, VALUE errat, VALUE str, VALUE highlight, VALUE reverse)
 {
-    volatile VALUE eclass = Qundef, emesg = Qundef;
+    volatile VALUE eclass;
 
     if (NIL_P(errinfo))
 	return;
@@ -198,29 +202,46 @@ rb_error_write(VALUE errinfo, VALUE errat, VALUE str)
     if (errat == Qundef) {
 	errat = Qnil;
     }
-    if ((eclass = CLASS_OF(errinfo)) != Qundef) {
-	VALUE e = rb_check_funcall(errinfo, rb_intern("message"), 0, 0);
-	if (e != Qundef) {
-	    if (!RB_TYPE_P(e, T_STRING)) e = rb_check_string_type(e);
-	    emesg = e;
-	}
+    eclass = CLASS_OF(errinfo);
+    if (NIL_P(reverse) || NIL_P(highlight)) {
+	VALUE tty = (VALUE)rb_stderr_tty_p();
+	if (NIL_P(reverse)) reverse = tty;
+	if (NIL_P(highlight)) highlight = tty;
     }
-    if (rb_stderr_tty_p()) {
-	write_warn(str, "\033[1mTraceback \033[m(most recent call last):\n");
+    if (reverse) {
+	static const char traceback[] = "Traceback "
+	    "(most recent call last):\n";
+	const int bold_part = rb_strlen_lit("Traceback");
+	char buff[sizeof(traceback)+sizeof(bold)+sizeof(reset)-2], *p = buff;
+	const char *msg = traceback;
+	long len = sizeof(traceback) - 1;
+	if (highlight) {
+#define APPEND(s, l) (memcpy(p, s, l), p += (l))
+	    APPEND(bold, sizeof(bold)-1);
+	    APPEND(traceback, bold_part);
+	    APPEND(reset, sizeof(reset)-1);
+	    APPEND(traceback + bold_part, sizeof(traceback)-bold_part-1);
+#undef APPEND
+	    len = p - (msg = buff);
+	}
+	write_warn2(str, msg, len);
 	print_backtrace(eclass, errat, str, TRUE);
-	print_errinfo(eclass, errat, emesg, str, TRUE);
+	print_errinfo(eclass, errat, emesg, str, highlight!=0);
     }
     else {
-	print_errinfo(eclass, errat, emesg, str, FALSE);
+	print_errinfo(eclass, errat, emesg, str, highlight!=0);
 	print_backtrace(eclass, errat, str, FALSE);
     }
 }
+
+VALUE rb_get_message(VALUE exc);
 
 void
 rb_ec_error_print(rb_execution_context_t * volatile ec, volatile VALUE errinfo)
 {
     volatile int raised_flag = ec->raised_flag;
-    volatile VALUE errat;
+    volatile VALUE errat = Qundef;
+    volatile VALUE emesg = Qundef;
 
     if (NIL_P(errinfo))
 	return;
@@ -230,8 +251,12 @@ rb_ec_error_print(rb_execution_context_t * volatile ec, volatile VALUE errinfo)
     if (EC_EXEC_TAG() == TAG_NONE) {
 	errat = rb_get_backtrace(errinfo);
     }
+    if (emesg == Qundef) {
+	emesg = Qnil;
+	emesg = rb_get_message(errinfo);
+    }
 
-    rb_error_write(errinfo, errat, Qnil);
+    rb_error_write(errinfo, emesg, errat, Qnil, Qnil, Qnil);
 
     EC_POP_TAG();
     ec->errinfo = errinfo;

@@ -349,6 +349,15 @@ prepare_iseq_build(rb_iseq_t *iseq,
 static void validate_get_insn_info(rb_iseq_t *iseq);
 #endif
 
+void
+rb_iseq_init_trace(rb_iseq_t *iseq)
+{
+    iseq->aux.trace_events = 0;
+    if (ruby_vm_event_enabled_flags & ISEQ_TRACE_EVENTS) {
+        rb_iseq_trace_set(iseq, ruby_vm_event_enabled_flags & ISEQ_TRACE_EVENTS);
+    }
+}
+
 static VALUE
 finish_iseq_build(rb_iseq_t *iseq)
 {
@@ -368,10 +377,7 @@ finish_iseq_build(rb_iseq_t *iseq)
 	rb_exc_raise(err);
     }
 
-    iseq->aux.trace_events = 0;
-    if (ruby_vm_event_enabled_flags & ISEQ_TRACE_EVENTS) {
-	rb_iseq_trace_set(iseq, ruby_vm_event_enabled_flags & ISEQ_TRACE_EVENTS);
-    }
+    rb_iseq_init_trace(iseq);
     return Qtrue;
 }
 
@@ -517,9 +523,11 @@ rb_iseq_new_with_opt(const NODE *node, VALUE name, VALUE path, VALUE realpath,
 {
     /* TODO: argument check */
     rb_iseq_t *iseq = iseq_alloc();
+    const rb_code_range_t *code_range = NULL;
 
     if (!option) option = &COMPILE_OPTION_DEFAULT;
-    prepare_iseq_build(iseq, name, path, realpath, first_lineno, node ? &node->nd_loc : NULL, parent, type, option);
+    if (node && !imemo_type_p((VALUE)node, imemo_ifunc)) code_range = &node->nd_loc;
+    prepare_iseq_build(iseq, name, path, realpath, first_lineno, code_range, parent, type, option);
 
     rb_iseq_compile_node(iseq, node);
     finish_iseq_build(iseq);
@@ -859,8 +867,13 @@ iseqw_s_compile(int argc, VALUE *argv, VALUE self)
       case 3: path = argv[--i];
       case 2: file = argv[--i];
     }
+
     if (NIL_P(file)) file = rb_fstring_cstr("<compiled>");
+    if (NIL_P(path)) path = file;
     if (NIL_P(line)) line = INT2FIX(1);
+
+    Check_Type(path, T_STRING);
+    Check_Type(file, T_STRING);
 
     return iseqw_new(rb_iseq_compile_with_option(src, file, path, line, 0, opt));
 }
@@ -987,7 +1000,7 @@ iseqw_check(VALUE iseqw)
     rb_iseq_t *iseq = DATA_PTR(iseqw);
 
     if (!iseq->body) {
-	ibf_load_iseq_complete(iseq);
+	rb_ibf_load_iseq_complete(iseq);
     }
 
     if (!iseq->body->location.label) {
@@ -1299,7 +1312,7 @@ static const struct iseq_insn_info_entry *
 get_insn_info_linear_search(const rb_iseq_t *iseq, size_t pos)
 {
     size_t i = 0, size = iseq->body->insns_info_size;
-    const struct iseq_insn_info_entry *insns_info = iseq->body->insns_info;
+    const struct iseq_insn_info_entry *insns_info = iseq->body->insns_info.body;
     const int debug = 0;
 
     if (debug) {
@@ -2639,7 +2652,7 @@ iseqw_to_binary(int argc, VALUE *argv, VALUE self)
 {
     VALUE opt;
     rb_scan_args(argc, argv, "01", &opt);
-    return iseq_ibf_dump(iseqw_check(self), opt);
+    return rb_iseq_ibf_dump(iseqw_check(self), opt);
 }
 
 /*
@@ -2658,7 +2671,7 @@ iseqw_to_binary(int argc, VALUE *argv, VALUE self)
 static VALUE
 iseqw_s_load_from_binary(VALUE self, VALUE str)
 {
-    return iseqw_new(iseq_ibf_load(str));
+    return iseqw_new(rb_iseq_ibf_load(str));
 }
 
 /*
@@ -2670,7 +2683,7 @@ iseqw_s_load_from_binary(VALUE self, VALUE str)
 static VALUE
 iseqw_s_load_from_binary_extra_data(VALUE self, VALUE str)
 {
-    return  iseq_ibf_load_extra_data(str);
+    return rb_iseq_ibf_load_extra_data(str);
 }
 
 /*

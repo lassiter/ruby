@@ -320,8 +320,8 @@ static void iseq_add_setlocal(rb_iseq_t *iseq, LINK_ANCHOR *const seq, int line,
 			   (VALUE)(ls) | 1, (VALUE)(le) | 1,			\
 			   (VALUE)(iseqv), (VALUE)(lc) | 1);			\
     LABEL_UNREMOVABLE(ls);							\
-    LABEL_UNREMOVABLE(le);							\
-    LABEL_UNREMOVABLE(lc);							\
+    LABEL_REF(le);								\
+    LABEL_REF(lc);								\
     rb_ary_push(ISEQ_COMPILE_DATA(iseq)->catch_table_ary, freeze_hide_obj(_e));	\
 } while (0)
 
@@ -2295,33 +2295,58 @@ replace_destination(INSN *dobj, INSN *nobj)
     if (!dl->refcnt) ELEM_REMOVE(&dl->link);
 }
 
+static LABEL*
+find_destination(INSN *i)
+{
+    int pos, len = insn_len(i->insn_id);
+    for (pos = 0; pos < len; ++pos) {
+	if (insn_op_types(i->insn_id)[pos] == TS_OFFSET) {
+	    return (LABEL *)OPERAND_AT(i, pos);
+	}
+    }
+    return 0;
+}
+
 static int
 remove_unreachable_chunk(rb_iseq_t *iseq, LINK_ELEMENT *i)
 {
     LINK_ELEMENT *first = i, *end;
+    int *unref_counts = 0, nlabels = ISEQ_COMPILE_DATA(iseq)->label_no;
 
     if (!i) return 0;
-    while (i) {
+    unref_counts = ALLOCA_N(int, nlabels);
+    MEMZERO(unref_counts, int, nlabels);
+    end = i;
+    do {
+	LABEL *lab;
 	if (IS_INSN(i)) {
-	    if (IS_INSN_ID(i, jump) || IS_INSN_ID(i, leave)) {
+	    if (IS_INSN_ID(i, leave)) {
+		end = i;
 		break;
+	    }
+	    else if ((lab = find_destination((INSN *)i)) != 0) {
+		if (lab->unremovable) break;
+		unref_counts[lab->label_no]++;
 	    }
 	}
 	else if (IS_LABEL(i)) {
-	    if (((LABEL *)i)->unremovable) return 0;
-	    if (((LABEL *)i)->refcnt > 0) {
+	    lab = (LABEL *)i;
+	    if (lab->unremovable) return 0;
+	    if (lab->refcnt > unref_counts[lab->label_no]) {
 		if (i == first) return 0;
-		i = i->prev;
 		break;
 	    }
+	    continue;
 	}
 	else if (IS_TRACE(i)) {
 	    /* do nothing */
 	}
-	else return 0;
-	i = i->next;
-    }
-    end = i;
+	else if (IS_ADJUST(i)) {
+	    LABEL *dest = ((ADJUST *)i)->label;
+	    if (dest && dest->unremovable) return 0;
+	}
+	end = i;
+    } while ((i = i->next) != 0);
     i = first;
     do {
 	if (IS_INSN(i)) {
@@ -2416,6 +2441,7 @@ iseq_peephole_optimize(rb_iseq_t *iseq, LINK_ELEMENT *list, const int do_tailcal
 	    goto again;
 	}
 	else if (IS_INSN_ID(diobj, leave)) {
+	    INSN *pop;
 	    /*
 	     *  jump LABEL
 	     *  ...
@@ -2423,6 +2449,7 @@ iseq_peephole_optimize(rb_iseq_t *iseq, LINK_ELEMENT *list, const int do_tailcal
 	     *  leave
 	     * =>
 	     *  leave
+	     *  pop
 	     *  ...
 	     * LABEL:
 	     *  leave
@@ -2432,6 +2459,9 @@ iseq_peephole_optimize(rb_iseq_t *iseq, LINK_ELEMENT *list, const int do_tailcal
 	    iobj->insn_id = BIN(leave);
 	    iobj->operand_size = 0;
 	    iobj->insn_info = diobj->insn_info;
+	    /* adjust stack depth */
+	    pop = new_insn_body(iseq, diobj->insn_info.line_no, BIN(pop), 0);
+	    ELEM_INSERT_NEXT(&iobj->link, &pop->link);
 	    goto again;
 	}
 	else if ((piobj = (INSN *)get_prev_insn(iobj)) != 0 &&
@@ -2439,6 +2469,8 @@ iseq_peephole_optimize(rb_iseq_t *iseq, LINK_ELEMENT *list, const int do_tailcal
 		  IS_INSN_ID(piobj, branchunless))) {
 	    INSN *pdiobj = (INSN *)get_destination_insn(piobj);
 	    if (niobj == pdiobj) {
+		int refcnt = IS_LABEL(piobj->link.next) ?
+		    ((LABEL *)piobj->link.next)->refcnt : 0;
 		/*
 		 * useless jump elimination (if/unless destination):
 		 *   if   L1
@@ -2456,7 +2488,12 @@ iseq_peephole_optimize(rb_iseq_t *iseq, LINK_ELEMENT *list, const int do_tailcal
 		piobj->insn_id = (IS_INSN_ID(piobj, branchif))
 		  ? BIN(branchunless) : BIN(branchif);
 		replace_destination(piobj, iobj);
-		ELEM_REMOVE(&iobj->link);
+		if (refcnt <= 1) {
+		    ELEM_REMOVE(&iobj->link);
+		}
+		else {
+		    /* TODO: replace other branch destinations too */
+		}
 		return COMPILE_OK;
 	    }
 	    else if (diobj == pdiobj) {
@@ -2614,9 +2651,13 @@ iseq_peephole_optimize(rb_iseq_t *iseq, LINK_ELEMENT *list, const int do_tailcal
 		}
 		else if (!iseq_pop_newarray(iseq, pobj)) {
 		    pobj = new_insn_core(iseq, pobj->insn_info.line_no, BIN(pop), 0, NULL);
-		    ELEM_INSERT_NEXT(&iobj->link, &pobj->link);
+                    ELEM_INSERT_PREV(&iobj->link, &pobj->link);
 		}
 		if (cond) {
+		    if (prev_dup) {
+			pobj = new_insn_core(iseq, pobj->insn_info.line_no, BIN(putnil), 0, NULL);
+			ELEM_INSERT_NEXT(&iobj->link, &pobj->link);
+		    }
 		    iobj->insn_id = BIN(jump);
 		    goto again;
 		}
@@ -3649,14 +3690,20 @@ compile_array(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node_ro
 		      case COMPILE_ARRAY_TYPE_HASH:
 			if (i > 0) {
 			    if (first) {
-				ADD_INSN1(anchor, line, newhash, INT2FIX(i));
+				if (!popped) {
+				    ADD_INSN1(anchor, line, newhash, INT2FIX(i));
+				}
 				APPEND_LIST(ret, anchor);
 			    }
 			    else {
-				ADD_INSN1(ret, line, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_VMCORE));
-				ADD_INSN(ret, line, swap);
+				if (!popped) {
+				    ADD_INSN1(ret, line, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_VMCORE));
+				    ADD_INSN(ret, line, swap);
+				}
 				APPEND_LIST(ret, anchor);
-				ADD_SEND(ret, line, id_core_hash_merge_ptr, INT2FIX(i + 1));
+				if (!popped) {
+				    ADD_SEND(ret, line, id_core_hash_merge_ptr, INT2FIX(i + 1));
+				}
 			    }
 			}
 			if (kw) {
@@ -4533,6 +4580,7 @@ compile_if(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, int 
     DECL_ANCHOR(else_seq);
     LABEL *then_label, *else_label, *end_label;
     VALUE branches = 0;
+    int ci_size, ci_kw_size;
 
     INIT_ANCHOR(cond_seq);
     INIT_ANCHOR(then_seq);
@@ -4543,8 +4591,22 @@ compile_if(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, int 
 
     compile_branch_condition(iseq, cond_seq, node->nd_cond,
 			     then_label, else_label);
+
+    ci_size = iseq->body->ci_size;
+    ci_kw_size = iseq->body->ci_kw_size;
     CHECK(COMPILE_(then_seq, "then", node_body, popped));
+    if (!then_label->refcnt) {
+        iseq->body->ci_size = ci_size;
+        iseq->body->ci_kw_size = ci_kw_size;
+    }
+
+    ci_size = iseq->body->ci_size;
+    ci_kw_size = iseq->body->ci_kw_size;
     CHECK(COMPILE_(else_seq, "else", node_else, popped));
+    if (!else_label->refcnt) {
+        iseq->body->ci_size = ci_size;
+        iseq->body->ci_kw_size = ci_kw_size;
+    }
 
     ADD_SEQ(ret, cond_seq);
 
@@ -5058,6 +5120,7 @@ compile_next(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, in
 	add_ensure_iseq(ret, iseq, 0);
 	ADD_INSNL(ret, line, jump, ISEQ_COMPILE_DATA(iseq)->end_label);
 	ADD_ADJUST_RESTORE(ret, splabel);
+	splabel->unremovable = FALSE;
 
 	if (!popped) {
 	    ADD_INSN(ret, line, putnil);
@@ -5988,6 +6051,7 @@ iseq_compile_each0(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *node, in
 	    nd_type(node->nd_args) == NODE_ARRAY && node->nd_args->nd_alen == 1 &&
 	    nd_type(node->nd_args->nd_head) == NODE_STR &&
 	    ISEQ_COMPILE_DATA(iseq)->current_block == NULL &&
+            !ISEQ_COMPILE_DATA(iseq)->option->frozen_string_literal &&
 	    ISEQ_COMPILE_DATA(iseq)->option->specialized_instruction) {
 	    VALUE str = freeze_literal(iseq, node->nd_args->nd_head->nd_lit);
 	    CHECK(COMPILE(ret, "recv", node->nd_recv));
@@ -6181,7 +6245,9 @@ iseq_compile_each0(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *node, in
 	    if (liseq->body->param.flags.has_rest) {
 		/* rest argument */
 		int idx = liseq->body->local_table_size - liseq->body->param.rest_start;
+
 		ADD_GETLOCAL(args, line, idx, lvar_level);
+		ADD_INSN1(args, line, splatarray, Qfalse);
 
 		argc = liseq->body->param.rest_start + 1;
 		flag |= VM_CALL_ARGS_SPLAT;
@@ -6983,6 +7049,7 @@ iseq_compile_each0(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *node, in
 	    nd_type(node->nd_args) == NODE_ARRAY && node->nd_args->nd_alen == 2 &&
 	    nd_type(node->nd_args->nd_head) == NODE_STR &&
 	    ISEQ_COMPILE_DATA(iseq)->current_block == NULL &&
+            !ISEQ_COMPILE_DATA(iseq)->option->frozen_string_literal &&
 	    ISEQ_COMPILE_DATA(iseq)->option->specialized_instruction)
 	{
 	    VALUE str = freeze_literal(iseq, node->nd_args->nd_head->nd_lit);
@@ -7089,6 +7156,18 @@ iseq_compile_each0(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *node, in
       ng:
 	debug_node_end();
 	return COMPILE_NG;
+    }
+
+    /* remove tracecoverage instruction if there is no relevant instruction */
+    if (IS_TRACE(ret->last) && ((TRACE*) ret->last)->event == RUBY_EVENT_LINE) {
+	LINK_ELEMENT *insn = ret->last->prev;
+	if (IS_INSN(insn) &&
+	    IS_INSN_ID(insn, tracecoverage) &&
+	    FIX2LONG(OPERAND_AT(insn, 0)) == RUBY_EVENT_COVERAGE_LINE
+	) {
+	    ELEM_REMOVE(insn); /* remove tracecovearge */
+	    RARRAY_ASET(ISEQ_LINE_COVERAGE(iseq), line - 1, Qnil);
+	}
     }
 
     debug_node_end();
@@ -8571,7 +8650,15 @@ ibf_load_iseq_each(const struct ibf_load *load, rb_iseq_t *iseq, ibf_offset_t of
 		rb_raise(rb_eRuntimeError, "path object size mismatch");
 	    }
 	    path = rb_fstring(RARRAY_AREF(pathobj, 0));
-	    realpath = rb_fstring(RARRAY_AREF(pathobj, 1));
+	    realpath = RARRAY_AREF(pathobj, 1);
+	    if (!NIL_P(realpath)) {
+		if (!RB_TYPE_P(realpath, T_STRING)) {
+		    rb_raise(rb_eArgError, "unexpected realpath %"PRIxVALUE
+			     "(%x), path=%+"PRIsVALUE,
+			     realpath, TYPE(realpath), path);
+		}
+		realpath = rb_fstring(realpath);
+	    }
 	}
 	else {
 	    rb_raise(rb_eRuntimeError, "unexpected path object");
@@ -8835,9 +8922,9 @@ static void
 ibf_dump_object_regexp(struct ibf_dump *dump, VALUE obj)
 {
     struct ibf_object_regexp regexp;
-    regexp.srcstr = RREGEXP_SRC(obj);
+    VALUE srcstr = RREGEXP_SRC(obj);
     regexp.option = (char)rb_reg_options(obj);
-    regexp.srcstr = (long)ibf_dump_object(dump, regexp.srcstr);
+    regexp.srcstr = (long)ibf_dump_object(dump, srcstr);
     IBF_WV(regexp);
 }
 
@@ -9264,7 +9351,7 @@ ibf_dump_setup(struct ibf_dump *dump, VALUE dumper_obj)
 }
 
 VALUE
-iseq_ibf_dump(const rb_iseq_t *iseq, VALUE opt)
+rb_iseq_ibf_dump(const rb_iseq_t *iseq, VALUE opt)
 {
     struct ibf_dump *dump;
     struct ibf_header header = {{0}};
@@ -9323,7 +9410,7 @@ ibf_iseq_list(const struct ibf_load *load)
 }
 
 void
-ibf_load_iseq_complete(rb_iseq_t *iseq)
+rb_ibf_load_iseq_complete(rb_iseq_t *iseq)
 {
     struct ibf_load *load = RTYPEDDATA_DATA(iseq->aux.loader.obj);
     rb_iseq_t *prev_src_iseq = load->iseq;
@@ -9338,7 +9425,7 @@ ibf_load_iseq_complete(rb_iseq_t *iseq)
 const rb_iseq_t *
 rb_iseq_complete(const rb_iseq_t *iseq)
 {
-    ibf_load_iseq_complete((rb_iseq_t *)iseq);
+    rb_ibf_load_iseq_complete((rb_iseq_t *)iseq);
     return iseq;
 }
 #endif
@@ -9365,7 +9452,7 @@ ibf_load_iseq(const struct ibf_load *load, const rb_iseq_t *index_iseq)
 	    rb_ary_store(load->iseq_list, iseq_index, (VALUE)iseq);
 
 #if !USE_LAZY_LOAD
-	    ibf_load_iseq_complete(iseq);
+	    rb_ibf_load_iseq_complete(iseq);
 #endif /* !USE_LAZY_LOAD */
 
 	    if (load->iseq) {
@@ -9440,21 +9527,23 @@ static const rb_data_type_t ibf_load_type = {
 };
 
 const rb_iseq_t *
-iseq_ibf_load(VALUE str)
+rb_iseq_ibf_load(VALUE str)
 {
     struct ibf_load *load;
-    const rb_iseq_t *iseq;
+    rb_iseq_t *iseq;
     VALUE loader_obj = TypedData_Make_Struct(0, struct ibf_load, &ibf_load_type, load);
 
     ibf_load_setup(load, loader_obj, str);
     iseq = ibf_load_iseq(load, 0);
+
+    rb_iseq_init_trace(iseq);
 
     RB_GC_GUARD(loader_obj);
     return iseq;
 }
 
 VALUE
-iseq_ibf_load_extra_data(VALUE str)
+rb_iseq_ibf_load_extra_data(VALUE str)
 {
     struct ibf_load *load;
     VALUE loader_obj = TypedData_Make_Struct(0, struct ibf_load, &ibf_load_type, load);

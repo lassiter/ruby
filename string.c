@@ -2538,6 +2538,7 @@ str_substr(VALUE str, long beg, long len, int empty)
 	str2 = str_new_shared(rb_obj_class(str2), str2);
 	RSTRING(str2)->as.heap.ptr += ofs;
 	RSTRING(str2)->as.heap.len = len;
+	ENC_CODERANGE_CLEAR(str2);
     }
     else {
 	if (!len && !empty) return Qnil;
@@ -8012,7 +8013,13 @@ rb_str_enumerate_lines(int argc, VALUE *argv, VALUE str, VALUE ary)
 
     if (subptr != pend) {
 	if (chomp) {
-	    pend = chomp_newline(subptr, pend, enc);
+	    if (rsnewline) {
+		pend = chomp_newline(subptr, pend, enc);
+	    }
+	    else if (pend - subptr >= rslen &&
+		     memcmp(pend - rslen, rsptr, rslen) == 0) {
+		pend -= rslen;
+	    }
 	}
 	line = rb_str_subseq(str, subptr - ptr, pend - subptr);
 	ENUM_ELEM(ary, line);
@@ -8302,20 +8309,12 @@ rb_str_codepoints(VALUE str)
     return rb_str_enumerate_codepoints(str, ary);
 }
 
-static VALUE
-rb_str_enumerate_grapheme_clusters(VALUE str, VALUE ary)
+static regex_t *
+get_reg_grapheme_cluster(rb_encoding *enc)
 {
-    VALUE orig = str;
+    int encidx = rb_enc_to_index(enc);
     regex_t *reg_grapheme_cluster = NULL;
     static regex_t *reg_grapheme_cluster_utf8 = NULL;
-    int encidx = ENCODING_GET(str);
-    rb_encoding *enc = rb_enc_from_index(encidx);
-    int unicode_p = rb_enc_unicode_p(enc);
-    const char *ptr, *end;
-
-    if (!unicode_p || single_byte_optimizable(str)) {
-	return rb_str_enumerate_chars(str, ary);
-    }
 
     /* synchronize */
     if (encidx == rb_utf8_encindex() && reg_grapheme_cluster_utf8) {
@@ -8332,8 +8331,22 @@ rb_str_enumerate_grapheme_clusters(VALUE str, VALUE ary)
 	    reg_grapheme_cluster_utf8 = reg_grapheme_cluster;
 	}
     }
+    return reg_grapheme_cluster;
+}
 
-    if (!ary) str = rb_str_new_frozen(str);
+static VALUE
+rb_str_each_grapheme_cluster_size(VALUE str, VALUE args, VALUE eobj)
+{
+    size_t grapheme_cluster_count = 0;
+    regex_t *reg_grapheme_cluster = NULL;
+    rb_encoding *enc = rb_enc_from_index(ENCODING_GET(str));
+    const char *ptr, *end;
+
+    if (!rb_enc_unicode_p(enc)) {
+	return rb_str_length(str);
+    }
+
+    reg_grapheme_cluster = get_reg_grapheme_cluster(enc);
     ptr = RSTRING_PTR(str);
     end = RSTRING_END(str);
 
@@ -8341,11 +8354,37 @@ rb_str_enumerate_grapheme_clusters(VALUE str, VALUE ary)
 	OnigPosition len = onig_match(reg_grapheme_cluster,
 				      (const OnigUChar *)ptr, (const OnigUChar *)end,
 				      (const OnigUChar *)ptr, NULL, 0);
-	if (len == 0) break;
-	if (len < 0) {
-	    break;
-	}
-	ENUM_ELEM(ary, rb_enc_str_new(ptr, len, enc));
+	if (len <= 0) break;
+	grapheme_cluster_count++;
+	ptr += len;
+    }
+
+    return SIZET2NUM(grapheme_cluster_count);
+}
+
+static VALUE
+rb_str_enumerate_grapheme_clusters(VALUE str, VALUE ary)
+{
+    VALUE orig = str;
+    regex_t *reg_grapheme_cluster = NULL;
+    rb_encoding *enc = rb_enc_from_index(ENCODING_GET(str));
+    const char *ptr0, *ptr, *end;
+
+    if (!rb_enc_unicode_p(enc)) {
+	return rb_str_enumerate_chars(str, ary);
+    }
+
+    if (!ary) str = rb_str_new_frozen(str);
+    reg_grapheme_cluster = get_reg_grapheme_cluster(enc);
+    ptr0 = ptr = RSTRING_PTR(str);
+    end = RSTRING_END(str);
+
+    while (ptr < end) {
+	OnigPosition len = onig_match(reg_grapheme_cluster,
+				      (const OnigUChar *)ptr, (const OnigUChar *)end,
+				      (const OnigUChar *)ptr, NULL, 0);
+	if (len <= 0) break;
+	ENUM_ELEM(ary, rb_str_subseq(str, ptr-ptr0, len));
 	ptr += len;
     }
     RB_GC_GUARD(str);
@@ -8373,7 +8412,7 @@ rb_str_enumerate_grapheme_clusters(VALUE str, VALUE ary)
 static VALUE
 rb_str_each_grapheme_cluster(VALUE str)
 {
-    RETURN_SIZED_ENUMERATOR(str, 0, 0, rb_str_each_char_size);
+    RETURN_SIZED_ENUMERATOR(str, 0, 0, rb_str_each_grapheme_cluster_size);
     return rb_str_enumerate_grapheme_clusters(str, 0);
 }
 
@@ -8911,6 +8950,7 @@ scan_once(VALUE str, VALUE pat, long *start, int set_backref_str)
 	else {
 	    match = rb_backref_get();
 	    regs = RMATCH_REGS(match);
+	    pos = BEG(0);
 	    end = END(0);
 	}
 	if (pos == end) {

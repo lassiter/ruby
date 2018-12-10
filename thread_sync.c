@@ -272,6 +272,7 @@ rb_mutex_lock(VALUE self)
 	    list_add_tail(&mutex->waitq, &w.node);
 	    native_sleep(th, timeout); /* release GVL */
 	    list_del(&w.node);
+
 	    if (!mutex->th) {
 		mutex->th = th;
 	    }
@@ -287,10 +288,13 @@ rb_mutex_lock(VALUE self)
 		th->status = prev_status;
 	    }
 	    th->vm->sleeper--;
-
 	    if (mutex->th == th) mutex_locked(th, self);
 
-	    RUBY_VM_CHECK_INTS_BLOCKING(th->ec);
+	    RUBY_VM_CHECK_INTS_BLOCKING(th->ec); /* may release mutex */
+	    if (!mutex->th) {
+		mutex->th = th;
+	        mutex_locked(th, self);
+	    }
 	}
     }
     return self;
@@ -413,6 +417,20 @@ rb_mutex_abandon_all(rb_mutex_t *mutexes)
 	mutex->th = 0;
 	mutex->next_mutex = 0;
 	list_head_init(&mutex->waitq);
+    }
+}
+
+/*
+ * All other threads are dead in the a new child process, so waitqs
+ * contain references to dead threads which we need to clean up
+ */
+static void
+rb_mutex_cleanup_keeping_mutexes(const rb_thread_t *current_thread)
+{
+    rb_mutex_t *mutex = current_thread->keeping_mutexes;
+    while (mutex) {
+        list_head_init(&mutex->waitq);
+        mutex = mutex->next_mutex;
     }
 }
 #endif
